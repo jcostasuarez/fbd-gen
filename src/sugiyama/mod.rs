@@ -20,7 +20,7 @@ use std::error::Error;
 use std::fmt;
 
 use routing::{Route, Trunk};
-use simplex::Arc;
+use simplex::{Arc, Failure};
 
 /// Extensión máxima de un dibujo por eje, en celdas. Con este tope las cuentas en `i32`
 /// del motor (y de quien escale las coordenadas, como una vista previa en píxeles) no
@@ -106,6 +106,9 @@ pub enum LayoutError {
     Infeasible,
     /// Un nodo tiene medidas negativas, o el dibujo podría exceder [`MAX_EXTENT`].
     TooLarge,
+    /// Se rompió un invariante interno del motor. No depende de la entrada: es un bug de
+    /// fbd-gen y conviene reportarlo con la entrada que lo produce.
+    Internal(&'static str),
 }
 
 impl fmt::Display for LayoutError {
@@ -115,6 +118,7 @@ impl fmt::Display for LayoutError {
             Self::Cycle => write!(f, "los cables forman un ciclo"),
             Self::Infeasible => write!(f, "restricciones de posición vertical inconsistentes"),
             Self::TooLarge => write!(f, "la red excede {MAX_EXTENT} celdas por eje"),
+            Self::Internal(what) => write!(f, "error interno del motor de layout: {what}"),
         }
     }
 }
@@ -213,9 +217,10 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
             weight: 1,
         })
         .collect();
-    let Some(rank) = simplex::solve(nodes.len(), &arcs) else {
-        return Err(LayoutError::Cycle);
-    };
+    let rank = simplex::solve(nodes.len(), &arcs).map_err(|f| match f {
+        Failure::Cycle => LayoutError::Cycle,
+        Failure::Internal(what) => LayoutError::Internal(what),
+    })?;
     let mut vertices: Vec<Vertex> = nodes
         .iter()
         .enumerate()
@@ -396,9 +401,10 @@ fn place_vertically(
             });
         }
     }
-    let Some(rank) = simplex::solve(vertices.len() + segments.len(), &arcs) else {
-        return Err(LayoutError::Infeasible);
-    };
+    let rank = simplex::solve(vertices.len() + segments.len(), &arcs).map_err(|f| match f {
+        Failure::Cycle => LayoutError::Infeasible,
+        Failure::Internal(what) => LayoutError::Internal(what),
+    })?;
     // Cada componente queda normalizada por separado; el auxiliar de un tramo puede
     // quedar arriba de sus nodos, así que se vuelve a normalizar sobre los vértices.
     let ys = &rank[..vertices.len()];

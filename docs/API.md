@@ -99,6 +99,12 @@ Un resultado `Ok` no contiene secciones inválidas ni salidas opcionales. Los er
 | `InvalidConfig { message }` | Opciones fuera de rango o inválidas |
 | `Library(LibraryError)` | Lectura o deserialización del catálogo base |
 | `Layout { section, source }` | El motor de layout no pudo dibujar la sección sin violar la grilla |
+| `Internal { section, message }` | Se rompió un invariante del pipeline: es un bug de fbd-gen, no un problema de la entrada |
+
+La generación no entra en pánico: el código de producción no tiene `unwrap`, `expect`,
+`panic!` ni `unreachable!` (lo impone un lint de clippy). Un invariante roto llega como
+`Internal` o, dentro del motor, como `Layout` con causa `sugiyama::LayoutError::Internal`;
+conviene reportarlo con la entrada que lo produce.
 
 `GenerationError::diagnostics()` da acceso a los diagnósticos de una entrada inválida.
 Los fallos operativos conservan su causa mediante `std::error::Error::source()`.
@@ -307,8 +313,9 @@ assert!(placement.nodes[1].x > placement.nodes[0].x);
 ```
 Si la entrada no se puede dibujar devuelve `sugiyama::LayoutError`: un puerto fuera de su
 caja (`PortOutOfNode`), cables con un ciclo (`Cycle`), restricciones sin solución
-(`Infeasible`), o una caja con medidas negativas o un dibujo que podría pasar de
-`sugiyama::MAX_EXTENT` celdas por eje (`TooLarge`). Ese tope garantiza que ninguna cuenta
+(`Infeasible`), una caja con medidas negativas o un dibujo que podría pasar de
+`sugiyama::MAX_EXTENT` celdas por eje (`TooLarge`), o un invariante interno roto
+(`Internal`, un bug). Ese tope garantiza que ninguna cuenta
 en `i32` desborde.
 
 Los demás módulos (validación, partición, normalización, export) son internos: su orden e

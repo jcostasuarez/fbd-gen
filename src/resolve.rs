@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::iec::{is_address, is_identifier, is_literal, is_variable_ref, task_name, var_root};
-use crate::library::{BlockDef, Library};
+use crate::library::{BlockDef, Extensible, Library};
 use crate::model::{DiagnosticCode as Code, *};
 use crate::xml;
 
@@ -14,6 +14,12 @@ pub enum Endpoint {
     Pin { block: usize, pin: String },
     Var(String),
     Lit(String),
+}
+
+/// Un extremo de link ya resuelto: un pin del bloque, o el valor que se le asigna.
+enum Side {
+    Pin(PinRef),
+    Value(Param),
 }
 
 pub fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
@@ -34,11 +40,11 @@ pub fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
 }
 
 /// Cantidad de instancias del pin extensible: la explícita, la mayor referenciada o el mínimo.
-fn extensible_count(
-    def: &BlockDef,
+fn extensible_count<'d>(
+    def: &'d BlockDef,
     explicit: Option<u32>,
     referenced: &[String],
-) -> Option<(usize, u32)> {
+) -> Option<(usize, &'d Extensible, u32)> {
     let (idx, ext) = def
         .inputs
         .iter()
@@ -49,7 +55,7 @@ fn extensible_count(
         .filter_map(|name| ext.index_of(name).map(|k| k + 1))
         .max()
         .unwrap_or(0);
-    Some((idx, explicit.unwrap_or(0).max(max_ref).max(ext.min)))
+    Some((idx, ext, explicit.unwrap_or(0).max(max_ref).max(ext.min)))
 }
 
 fn build_block(
@@ -60,8 +66,7 @@ fn build_block(
 ) -> Block {
     let mut ext = extensible_count(def, spec.inputs, referenced);
     let mut extra_pins = 0;
-    if let Some((i, n)) = &mut ext {
-        let e = def.inputs[*i].extensible.as_ref().unwrap();
+    if let Some((_, e, n)) = &mut ext {
         if *n > e.max {
             diags
                 .push(
@@ -93,7 +98,7 @@ fn build_block(
     for (i, p) in def.inputs.iter().enumerate() {
         let Some(pos) = p.position else { continue };
         match (&p.extensible, ext) {
-            (Some(e), Some((ei, n))) if ei == i => {
+            (Some(e), Some((ei, _, n))) if ei == i => {
                 for k in 0..n {
                     push(e.pin_name(k), Dir::In, &p.ty, 3 + pos + k, commutative);
                 }
@@ -417,18 +422,13 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
     let mut drivers: HashMap<PinRef, String> = HashMap::new();
 
     for (li, (a, b, sa, sb)) in links.into_iter().enumerate() {
-        let lookup = |section: &Section, e: &Endpoint| -> Result<Option<PinRef>, Box<Diagnostic>> {
+        let lookup = |section: &Section, e: Endpoint| -> Result<Side, Box<Diagnostic>> {
             match e {
-                Endpoint::Pin { block, pin } => section.blocks[*block]
-                    .pin_index(pin)
-                    .map(|p| {
-                        Some(PinRef {
-                            block: *block,
-                            pin: p,
-                        })
-                    })
+                Endpoint::Pin { block, pin } => section.blocks[block]
+                    .pin_index(&pin)
+                    .map(|p| Side::Pin(PinRef { block, pin: p }))
                     .ok_or_else(|| {
-                        let b = &section.blocks[*block];
+                        let b = &section.blocks[block];
                         let mut d = Diagnostic::new(
                             Level::Error,
                             STAGE,
@@ -438,10 +438,11 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                         d.at_link(li).at_block(&b.id).at_pin_name(pin);
                         Box::new(d)
                     }),
-                _ => Ok(None),
+                Endpoint::Var(v) => Ok(Side::Value(Param::Var(v))),
+                Endpoint::Lit(l) => Ok(Side::Value(Param::Lit(l))),
             }
         };
-        let (ra, rb) = match (lookup(&section, &a), lookup(&section, &b)) {
+        let (ra, rb) = match (lookup(&section, a), lookup(&section, b)) {
             (Ok(ra), Ok(rb)) => (ra, rb),
             (Err(e), _) | (_, Err(e)) => {
                 diags.0.push(*e);
@@ -449,8 +450,8 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
             }
         };
         let link = format!("[{sa} -> {sb}]");
-        if let Some(name) = [&a, &b].into_iter().find_map(|e| match e {
-            Endpoint::Var(v) if !is_variable_ref(v) => Some(v),
+        if let Some(name) = [&ra, &rb].into_iter().find_map(|side| match side {
+            Side::Value(Param::Var(v)) if !is_variable_ref(v) => Some(v),
             _ => None,
         }) {
             diags
@@ -497,7 +498,7 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
         };
 
         match (ra, rb) {
-            (Some(from), Some(to)) => {
+            (Side::Pin(from), Side::Pin(to)) => {
                 if !section.pin(from).dir.has_right() {
                     diags
                         .push(
@@ -516,19 +517,14 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 // La compatibilidad de tipos la valida la inferencia (types.rs).
                 section.wires.push(Wire { from, to });
             }
-            (None, Some(to)) => {
+            (Side::Value(param), Side::Pin(to)) => {
                 if !claim_input(&section, to, diags) {
                     continue;
                 }
-                let param = match a {
-                    Endpoint::Lit(s) => Param::Lit(s),
-                    Endpoint::Var(s) => Param::Var(s),
-                    Endpoint::Pin { .. } => unreachable!(),
-                };
                 section.pin_mut(to).param_in = Some(param);
             }
-            (Some(from), None) => {
-                let Endpoint::Var(name) = b else {
+            (Side::Pin(from), Side::Value(value)) => {
+                let Param::Var(name) = value else {
                     diags
                         .push(
                             Level::Error,
@@ -566,7 +562,7 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 }
                 section.pin_mut(from).param_out = Some(Param::Var(name));
             }
-            (None, None) => {
+            (Side::Value(_), Side::Value(_)) => {
                 diags
                     .push(
                         Level::Error,

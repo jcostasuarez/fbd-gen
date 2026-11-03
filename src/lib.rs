@@ -21,6 +21,21 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+// Una entrada inválida es un `Err` con diagnósticos y un invariante roto es
+// `GenerationError::Internal` o `sugiyama::LayoutError::Internal`: el código de producción
+// no tiene caminos explícitos a un panic. Los tests sí pueden usar `unwrap`.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
+
 // Etapas internas: su orden e invariantes no son parte del contrato. Lo público son
 // `Generator`, los tipos que se re-exportan abajo y el motor `sugiyama`.
 mod consistency;

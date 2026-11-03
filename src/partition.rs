@@ -422,9 +422,10 @@ pub fn partition(
         format!("orden de secciones: {}", ordered.join(" -> ")),
     );
 
-    let mut parts: Vec<Option<Section>> = parts.into_iter().map(Some).collect();
+    let mut sections: Vec<(usize, Section)> = parts.into_iter().enumerate().collect();
+    sections.sort_by_key(|(s, _)| pos.get(s).copied());
     Partition {
-        sections: order.iter().map(|&s| parts[s].take().unwrap()).collect(),
+        sections: sections.into_iter().map(|(_, s)| s).collect(),
         link_vars,
     }
 }

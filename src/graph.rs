@@ -63,7 +63,10 @@ pub fn topo_order(
     while order.len() < n {
         let v = match ready.pop() {
             Some(Reverse(v)) => v,
-            None if on_cycle == OnCycle::Break => (0..n).find(|&v| !placed[v]).unwrap(),
+            None if on_cycle == OnCycle::Break => match (0..n).find(|&v| !placed[v]) {
+                Some(v) => v,
+                None => break,
+            },
             None => break,
         };
         if placed[v] {

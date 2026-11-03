@@ -209,7 +209,9 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
                 on_stack[v] = true;
             }
             if let Some(&u) = adj[v].get(i) {
-                call.last_mut().unwrap().1 += 1;
+                if let Some(top) = call.last_mut() {
+                    top.1 += 1;
+                }
                 if index[u] == usize::MAX {
                     call.push((u, 0));
                 } else if on_stack[u] {
@@ -238,11 +240,10 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
 
 /// Etapa 7: redes = componentes conexos por cables, ordenadas por las dependencias
 /// anteriores al corte de fan-out. Los empates respetan el orden del modelo.
-pub fn networks(section: &Section) -> Vec<Vec<usize>> {
-    ordered_networks(section).expect("la normalización conserva las dependencias de ejecución")
-}
-
-fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
+///
+/// `None` si las dependencias no admiten un orden entre redes. La normalización solo
+/// corta cables cuando ese orden existe, así que después de ella es un bug.
+pub fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
     let n = section.blocks.len();
     let mut uf = UnionFind::new(n);
     for w in &section.wires {

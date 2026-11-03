@@ -173,7 +173,7 @@ fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> Grou
     GroupGraph {
         name: name.to_string(),
         blocks: blocks.to_vec(),
-        hash: h(features.last().unwrap()),
+        hash: features.last().map_or(0, h),
         labels,
         features,
         block_types,
@@ -291,13 +291,17 @@ fn literal_outliers(section: &Section, members: &[&GroupGraph], diags: &mut Diag
         if counts.len() < 2 {
             continue;
         }
-        let (majority, n) = counts
+        let Some((majority, n)) = counts
             .iter()
             .max_by_key(|(_, n)| **n)
             .map(|(v, n)| (v.clone(), *n))
-            .unwrap();
+        else {
+            continue;
+        };
         // Para mostrar, los valores tal como los escribió un equipo de la mayoría.
-        let shown = per_group.values().find(|v| key(v) == majority).unwrap();
+        let Some(shown) = per_group.values().find(|v| key(v) == majority) else {
+            continue;
+        };
         let shown: Vec<&str> = shown.iter().map(|x| x.0.as_str()).collect();
         if n * 2 <= per_group.len() {
             let names: Vec<&str> = per_group

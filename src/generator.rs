@@ -184,6 +184,14 @@ pub enum GenerationError {
         section: String,
         source: Box<dyn Error + Send + Sync>,
     },
+    /// Se rompió un invariante del pipeline. No depende de la entrada ni de la
+    /// configuración: es un bug de fbd-gen y conviene reportarlo con la entrada que lo
+    /// produce. Los fallos internos del motor de layout llegan como `Layout`, con
+    /// `sugiyama::LayoutError::Internal` como causa.
+    Internal {
+        section: String,
+        message: String,
+    },
 }
 
 impl GenerationError {
@@ -208,6 +216,9 @@ impl fmt::Display for GenerationError {
             Self::InvalidConfig { message } => write!(f, "configuración inválida: {message}"),
             Self::Library(source) => write!(f, "{source}"),
             Self::Layout { section, source } => write!(f, "layout de {section}: {source}"),
+            Self::Internal { section, message } => {
+                write!(f, "error interno en {section}: {message} (bug de fbd-gen)")
+            }
         }
     }
 }
@@ -364,7 +375,12 @@ fn render_section(
     mut diags: Diagnostics,
 ) -> Result<GeneratedSection, GenerationError> {
     normalize::normalize(&mut section, &cfg.normalization, &mut diags);
-    let nets = normalize::networks(&section);
+    let Some(nets) = normalize::ordered_networks(&section) else {
+        return Err(GenerationError::Internal {
+            section: section.name.clone(),
+            message: "la normalización dejó dependencias sin orden posible entre redes".into(),
+        });
+    };
     let vars = types::section_vars(&section, known, &mut diags);
     if diags.has_errors() {
         return Err(GenerationError::InvalidInput {
