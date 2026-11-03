@@ -11,6 +11,18 @@ use crate::{
     GeneratedProgram, GeneratedSection, GenerationError, Generator, GeneratorConfig, SectionSpec,
 };
 
+/// Layout con la reasignación de entradas conmutativas, como en `render_section`.
+fn place(sec: &mut Section, nets: &[Vec<usize>], d: &mut Diagnostics) -> layout::Layout {
+    let cfg = LayoutConfig::default();
+    let first = layout::layout(sec, nets, &cfg).unwrap();
+    let swaps = layout::commutative_swaps(sec, &first);
+    if swaps.is_empty() {
+        return first;
+    }
+    layout::apply_swaps(sec, &swaps, d);
+    layout::layout(sec, nets, &cfg).unwrap()
+}
+
 fn lib() -> &'static Library {
     static LIB: OnceLock<Library> = OnceLock::new();
     LIB.get_or_init(|| {
@@ -157,7 +169,7 @@ fn commutative_inputs_follow_sources() {
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut sec, &NormalizeConfig::default(), &mut d);
     let nets = normalize::networks(&sec);
-    let lay = layout::layout(&mut sec, &nets, &LayoutConfig::default(), &mut d).unwrap();
+    let lay = place(&mut sec, &nets, &mut d);
 
     // Sin cruces: el orden vertical de las fuentes coincide con el de los pines destino.
     let mut ends: Vec<(i32, i32)> = lay
@@ -418,7 +430,7 @@ fn network_comment_is_a_header_text_box_in_cells() {
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     let nets = normalize::networks(&sec);
-    let lay = layout::layout(&mut sec, &nets, &LayoutConfig::default(), &mut d).unwrap();
+    let lay = place(&mut sec, &nets, &mut d);
     assert_eq!(lay.texts.len(), 1);
     let t = &lay.texts[0];
     // Debajo de la primera red, encima del bloque comentado y sin pisarlo.
@@ -525,7 +537,7 @@ fn each_network_comment_gets_its_own_box() {
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     let nets = normalize::networks(&sec);
-    let lay = layout::layout(&mut sec, &nets, &LayoutConfig::default(), &mut d).unwrap();
+    let lay = place(&mut sec, &nets, &mut d);
     let t: Vec<(&str, i32, i32)> = lay
         .texts
         .iter()

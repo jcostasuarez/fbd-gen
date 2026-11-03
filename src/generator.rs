@@ -294,13 +294,20 @@ fn render_section(
             diagnostics: diags.0,
         });
     }
-    let placed =
-        layout::layout(&mut section, &nets, &cfg.layout, &mut diags).map_err(|source| {
-            GenerationError::Layout {
-                section: section.name.clone(),
-                source: source.into(),
-            }
-        })?;
+    let place = |section: &Section| {
+        layout::layout(section, &nets, &cfg.layout).map_err(|source| GenerationError::Layout {
+            section: section.name.clone(),
+            source: source.into(),
+        })
+    };
+    // Primera pasada; si las entradas conmutativas quedan cruzadas se reasignan según
+    // ese dibujo y se dibuja de nuevo.
+    let mut placed = place(&section)?;
+    let swaps = layout::commutative_swaps(&section, &placed);
+    if !swaps.is_empty() {
+        layout::apply_swaps(&mut section, &swaps, &mut diags);
+        placed = place(&section)?;
+    }
     let data = output::to_output(&section, &nets, &placed, &diags);
     let xml = xef::to_exchange_xml(&section, &placed, task, &vars);
     let svg = output::to_svg(&section, &placed);
