@@ -625,3 +625,39 @@ fn sheet_beyond_the_extent_cap_is_a_layout_error() {
         ),
     }
 }
+
+#[test]
+fn control_characters_in_xml_texts_are_validation_errors() {
+    let s = spec(
+        r#"{"name":"P",
+            "variables":[{"name":"V","type":"BOOL","init":"FALSE\u0002","comment":"a\u0001b",
+                          "address":"%M1\u001b"}],
+            "blocks":[{"id":"n","type":"NOT","comment":"x\u0000y"},
+                      {"id":"m","type":"CONCAT_STR"}],
+            "links":[["TRUE","n.IN"],["n.OUT","V"],
+                     ["'a\u0007b'","m.IN1"],["'c'","m.IN2"],["m.OUT","Texto"]],
+            "comments":[{"at":"n","text":"c\u0008d"}]}"#,
+    );
+    let error = generator().generate_program(&s).unwrap_err();
+    let bad: Vec<&str> = error
+        .diagnostics()
+        .iter()
+        .filter(|d| d.level == Level::Error && d.message.contains("no admitido en XML"))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(bad.len(), 6, "{bad:#?}");
+    for expected in ["U+0002", "U+0001", "U+001B", "U+0000", "U+0007", "U+0008"] {
+        assert!(
+            bad.iter().any(|m| m.contains(expected)),
+            "{expected}: {bad:#?}"
+        );
+    }
+
+    // Tabulación y saltos de línea sí son texto XML válido.
+    let ok = spec(
+        r#"{"name":"P","blocks":[{"id":"n","type":"NOT","comment":"línea 1\nlínea 2\tfin"}],
+            "links":[["BOOL#TRUE","n.IN"]],
+            "comments":[{"at":"n","text":"Arranque\r\nP101"}]}"#,
+    );
+    generator().generate_program(&ok).unwrap();
+}

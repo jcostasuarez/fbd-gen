@@ -88,6 +88,9 @@ nombre inválido, un grafo sin bloques o más entradas extensibles que el máxim
 bloque son errores de validación, antes de ejecutar el layout.
 Un campo desconocido (`instace`, `partiton`...) es un error al leer el JSON: un
 typo nunca se ignora en silencio.
+Los textos libres que van al XML (comentarios, `type`, `address`, `comment` e `init` de
+las variables, literales de los links) no pueden tener caracteres de control salvo
+tabulación y saltos de línea: XML 1.0 no los admite ni escapados.
 
 `variables` es opcional: lo que no se declara se tipa por inferencia (`src/types.rs`), y
 una variable sin tipo deducible es un error.

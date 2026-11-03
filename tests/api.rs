@@ -260,6 +260,7 @@ fn invalid_dfb_interfaces_do_not_enter_the_catalog() {
         BlockDefinition::dfb("Bad Name", 10),
         BlockDefinition::dfb("Bad", 0),
         BlockDefinition::dfb("Bad", 10).input("X", "", 1),
+        BlockDefinition::dfb("Bad", 10).input("X", "BO\u{1}OL", 1),
         BlockDefinition::dfb("Bad", 10).input("X", "BOOL", 0),
         BlockDefinition::dfb("Bad", 10).input("X", "BOOL", u32::MAX),
         // Tope de 1000 celdas: un ancho o una fila absurda desbordaría el layout.

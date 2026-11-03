@@ -129,8 +129,11 @@ fn validate(def: &BlockDef) -> Result<(), LibraryError> {
                     pin.name
                 )));
             }
-            if pin.ty.trim().is_empty() {
-                return Err(bad(format!("{}: tipo vacío", pin.name)));
+            if pin.ty.trim().is_empty() || pin.ty.chars().any(char::is_control) {
+                return Err(bad(format!(
+                    "{}: tipo vacío o con caracteres de control",
+                    pin.name
+                )));
             }
             let mut count = 1;
             if let Some(ext) = &pin.extensible {
