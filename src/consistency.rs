@@ -15,6 +15,7 @@ use crate::model::*;
 const STAGE: Stage = Stage::Consistency;
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ConsistencyConfig {
     /// Similitud mínima (Jaccard sobre rasgos WL) para considerar que un equipo debería
     /// seguir a un típico.

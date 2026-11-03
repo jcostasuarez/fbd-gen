@@ -20,6 +20,7 @@ use crate::{consistency, layout, normalize, output, partition, resolve, types, x
 /// Entrada de una sola sección: no acepta opciones de partición.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SectionSpec {
     pub name: String,
     #[serde(default = "model::default_task")]
@@ -62,6 +63,7 @@ impl From<SectionSpec> for ProgramSpec {
 
 /// Opciones reutilizables para todas las generaciones de una instancia.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct GeneratorConfig {
     pub normalization: NormalizeConfig,
     pub layout: LayoutConfig,
@@ -70,6 +72,7 @@ pub struct GeneratorConfig {
 
 /// Una generación exitosa siempre contiene todas sus secciones, ordenadas.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct GeneratedProgram {
     pub name: String,
     pub task: String,
@@ -79,6 +82,7 @@ pub struct GeneratedProgram {
 
 /// Resultado propio, sin referencias al generador ni necesidad de parsear JSON.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct GeneratedSection {
     pub name: String,
     pub task: String,

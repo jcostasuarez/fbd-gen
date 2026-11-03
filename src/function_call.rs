@@ -14,6 +14,7 @@ use crate::{
 /// Los mapas relacionan nombres de pines con variables o literales IEC.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct FunctionCallSpec {
     /// Nombre de la sección generada.
     pub name: String,

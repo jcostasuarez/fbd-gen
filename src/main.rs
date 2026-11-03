@@ -4,9 +4,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use fbd_gen::{
-    Diagnostic, GenerationError, Generator, GeneratorConfig, Level, NormalizeConfig, ProgramSpec,
-};
+use fbd_gen::{Diagnostic, GenerationError, Generator, GeneratorConfig, Level, ProgramSpec};
 
 /// Genera las secciones FBD de Control Expert a partir del grafo semántico de un programa.
 #[derive(Parser)]
@@ -65,12 +63,9 @@ fn run() -> Result<bool> {
         .with_context(|| format!("no se pudo leer {}", args.input.display()))?;
     let spec: ProgramSpec = serde_json::from_str(&text).context("grafo de programa inválido")?;
 
-    let generator = generator.with_config(GeneratorConfig {
-        normalization: NormalizeConfig {
-            max_fanout: args.max_fanout,
-        },
-        ..GeneratorConfig::default()
-    })?;
+    let mut config = GeneratorConfig::default();
+    config.normalization.max_fanout = args.max_fanout;
+    let generator = generator.with_config(config)?;
     let result = match generator.generate_program(&spec) {
         Ok(result) => result,
         Err(GenerationError::InvalidInput { scope, diagnostics }) => {

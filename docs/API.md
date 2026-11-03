@@ -41,10 +41,31 @@ sección. Deserializar un JSON con `partition` como `SectionSpec` es un error; `
 y `stage` de sus bloques se conservan como metadatos. No se aplica el chequeo entre equipos.
 
 Los dos formatos implementan `Serialize` y `Deserialize`. Para construirlos desde Rust
-existen `ProgramSpec::new`, `SectionSpec::new`, `BlockSpec::new` y `VarSpec::new`.
+existen `ProgramSpec::new`, `SectionSpec::new`, `BlockSpec::new`, `VarSpec::new` y
+`CommentSpec::new`; los campos opcionales se completan después, uno por uno.
 
 `GeneratorConfig` agrupa `normalization`, `layout` y `consistency`; cada configuración
-tiene `Default`. `LayoutConfig` son medidas enteras en celdas: separación entre
+tiene `Default` y se ajusta campo por campo:
+
+```rust,no_run
+use fbd_gen::{Generator, GeneratorConfig};
+
+let mut config = GeneratorConfig::default();
+config.normalization.max_fanout = 5;
+config.layout.node_gap = 3;
+let generator = Generator::embedded()?.with_config(config)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+### Compatibilidad entre versiones
+
+Los structs públicos (entradas, configuraciones, resultados, `Diagnostic` y los tipos de
+`sugiyama`) son `#[non_exhaustive]`: una versión nueva puede agregarles campos sin romper
+a quien los use. Por eso, desde otro crate no se arman con un literal `Tipo { .. }`, ni
+siquiera con `..Default::default()`: se usan `new`/`Default` y después se asignan los
+campos públicos. Los enums de errores y `Stage` también pueden sumar
+variantes, así que un `match` sobre ellos necesita un brazo `_`. `Level`, `PinDirection`,
+`BlockKind`, `Parameter` y `LinkSpec` son conjuntos cerrados. `LayoutConfig` son medidas enteras en celdas: separación entre
 bloques, entre capas y entre redes, margen de la hoja y escalas de texto.
 
 ## Resultados y errores
@@ -129,8 +150,26 @@ cargo run -- examples/custom_dfb.json --extra-lib examples/custom_blocks.json
 `register`, `register_all`, `extend_from_json` o `extend_from_file` antes de crear el generador.
 `Library::default()` permite empezar con un catálogo vacío.
 
-El campo `kind` admite `EF`, `EFB` y `DFB`. Para EF/EFB se pueden construir o deserializar
-`BlockDefinition`, `PinDefinition` y, para una EF extensible, `ExtensiblePin`.
+El campo `kind` admite `EF`, `EFB` y `DFB`. Para EF/EFB se puede deserializar la
+definición o construirla con `BlockDefinition::new(nombre, kind, ancho)`. Una entrada
+extensible se arma con `PinDefinition` y `ExtensiblePin` y se agrega con `pin`:
+
+```rust,no_run
+use fbd_gen::{BlockDefinition, BlockKind, ExtensiblePin, Generator, PinDefinition, PinDirection};
+
+let mut generator = Generator::embedded()?;
+generator.register_block(
+    // IN1..IN8, mínimo 2: `"inputs": 4` en el bloque crea IN1..IN4.
+    BlockDefinition::new("MiAnd", BlockKind::Ef, 8)
+        .pin(
+            PinDirection::In,
+            PinDefinition::new("IN1", "BOOL", 1).with_extensible(ExtensiblePin::new("IN", 1, 2, 8)),
+        )
+        .output("OUT", "BOOL", 1),
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 Las EFB/DFB generan instancias; una EF genera un objeto sin instancia persistente.
 
 **Registrar una interfaz no crea ni importa la lógica de la DFB.** Antes de importar la
@@ -200,13 +239,28 @@ fbd-gen = { path = "...", default-features = false, features = ["embedded-librar
 
 ```rust
 let generator = fbd_gen::Generator::embedded()?;
+# Ok::<(), fbd_gen::GenerationError>(())
 ```
 
 ## Motor de layout
 
-`fbd_gen::sugiyama::layout` se puede usar por separado: recibe cajas (`Node`), cables
-entre puertos en filas fijas (`Edge`, sin ciclos) y separaciones (`Spacing`), y devuelve la
-esquina de cada caja y los quiebres de cada cable (`Placement`), todo en enteros.
+`fbd_gen::sugiyama::layout` se puede usar por separado: recibe cajas (`Node::new`), cables
+entre puertos en filas fijas (`Edge::new`, sin ciclos) y separaciones (`Spacing::new`), y
+devuelve la esquina de cada caja y los quiebres de cada cable (`Placement`), todo en enteros.
+
+```rust
+use fbd_gen::sugiyama::{Edge, Node, Spacing, layout};
+
+// Dos cajas de 4x3; la salida de la fila 1 de la primera va a la entrada de la fila 1
+// de la segunda.
+let placement = layout(
+    &[Node::new(4, 3), Node::new(4, 3)],
+    &[Edge::new(0, 1, 1, 1)],
+    &Spacing::new(2, 3),
+)?;
+assert!(placement.nodes[1].x > placement.nodes[0].x);
+# Ok::<(), fbd_gen::sugiyama::LayoutError>(())
+```
 Si la entrada no se puede dibujar devuelve `sugiyama::LayoutError`: un puerto fuera de su
 caja (`PortOutOfNode`), cables con un ciclo (`Cycle`), restricciones sin solución
 (`Infeasible`), o una caja con medidas negativas o un dibujo que podría pasar de

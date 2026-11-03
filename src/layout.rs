@@ -55,6 +55,7 @@ macro_rules! bail {
 
 /// Medidas del dibujo, en celdas de grilla.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LayoutConfig {
     /// Celdas de ancho cada 10 caracteres de un parámetro actual (variable o literal).
     /// Calibrar contra Control Expert.

@@ -37,13 +37,21 @@ pub struct Pos {
 /// Caja de un nodo. Los puertos de entrada están en la columna 0 y los de salida en la
 /// columna `width`, cada uno en su fila (relativa al borde superior).
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Node {
     pub width: i32,
     pub height: i32,
 }
 
+impl Node {
+    pub fn new(width: i32, height: i32) -> Self {
+        Self { width, height }
+    }
+}
+
 /// Cable de la salida `from_row` de `from` a la entrada `to_row` de `to`.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Edge {
     pub from: usize,
     pub from_row: i32,
@@ -51,7 +59,19 @@ pub struct Edge {
     pub to_row: i32,
 }
 
+impl Edge {
+    pub fn new(from: usize, from_row: i32, to: usize, to_row: i32) -> Self {
+        Self {
+            from,
+            from_row,
+            to,
+            to_row,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Spacing {
     /// Filas libres entre dos nodos de una misma capa.
     pub node: i32,
@@ -59,7 +79,14 @@ pub struct Spacing {
     pub layer: i32,
 }
 
+impl Spacing {
+    pub fn new(node: i32, layer: i32) -> Self {
+        Self { node, layer }
+    }
+}
+
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Placement {
     /// Esquina superior izquierda de cada nodo.
     pub nodes: Vec<Pos>,

@@ -26,6 +26,7 @@ impl Kind {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Extensible {
     pub min: u32,
     pub max: u32,
@@ -35,6 +36,16 @@ pub struct Extensible {
 }
 
 impl Extensible {
+    /// Pines `{prefix}{first_index}`, `{prefix}{first_index + 1}`... entre `min` y `max`.
+    pub fn new(prefix: impl Into<String>, first_index: u32, min: u32, max: u32) -> Self {
+        Self {
+            min,
+            max,
+            prefix: prefix.into(),
+            first_index,
+        }
+    }
+
     pub fn pin_name(&self, k: u32) -> String {
         format!("{}{}", self.prefix, self.first_index + k)
     }
@@ -55,6 +66,7 @@ impl Extensible {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PinDef {
     pub name: String,
     #[serde(rename = "type")]
@@ -64,8 +76,27 @@ pub struct PinDef {
     pub extensible: Option<Extensible>,
 }
 
+impl PinDef {
+    /// Pin con representación gráfica en la posición `position` de su lado (1 = arriba).
+    pub fn new(name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
+        Self {
+            name: name.into(),
+            ty: ty.into(),
+            position: Some(position),
+            extensible: None,
+        }
+    }
+
+    /// Convierte el pin en el primero de una serie extensible (`IN1`, `IN2`...).
+    pub fn with_extensible(mut self, extensible: Extensible) -> Self {
+        self.extensible = Some(extensible);
+        self
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct BlockDef {
     pub name: String,
     pub kind: Kind,

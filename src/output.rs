@@ -11,6 +11,7 @@ use crate::xml::escape as esc;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct OutSection {
     pub name: String,
     pub width: i32,
@@ -22,6 +23,7 @@ pub struct OutSection {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OutBlock {
     pub id: String,
     #[serde(rename = "type")]
@@ -37,6 +39,7 @@ pub struct OutBlock {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct OutPin {
     pub name: String,
     pub dir: Dir,
@@ -48,6 +51,7 @@ pub struct OutPin {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OutText {
     pub text: String,
     pub x: i32,
@@ -57,6 +61,7 @@ pub struct OutText {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OutLink {
     pub from: String,
     pub to: String,

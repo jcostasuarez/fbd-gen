@@ -386,3 +386,57 @@ fn programs_write_the_same_files_as_the_cli() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Los tipos públicos son `#[non_exhaustive]`: desde otro crate se arman con sus
+/// constructores y se ajustan campo por campo. Este test usa solo eso.
+#[test]
+fn public_types_are_built_through_constructors() {
+    use fbd_gen::sugiyama::{self, Edge, Node, Spacing};
+    use fbd_gen::{BlockKind, CommentSpec, ExtensiblePin, PinDefinition, PinDirection, VarSpec};
+
+    // EF propia con entradas extensibles IN1..IN4 (mínimo 2).
+    let custom = BlockDefinition::new("MyAnd", BlockKind::Ef, 8)
+        .pin(
+            PinDirection::In,
+            PinDefinition::new("IN1", "BOOL", 1).with_extensible(ExtensiblePin::new("IN", 1, 2, 4)),
+        )
+        .output("OUT", "BOOL", 1);
+    let mut generator = Generator::new(Library::default());
+    generator.register_block(custom).unwrap();
+
+    let mut config = GeneratorConfig::default();
+    config.normalization.max_fanout = 5;
+    config.layout.node_gap = 3;
+    config.consistency.wl_rounds = 2;
+    let generator = generator.with_config(config).unwrap();
+
+    let mut spec = SectionSpec::new("Custom");
+    spec.variables.push(VarSpec::new("A", "BOOL"));
+    let mut block = BlockSpec::new("g", "MyAnd");
+    block.inputs = Some(3);
+    spec.blocks.push(block);
+    spec.links.extend([
+        LinkSpec::Pair("A".into(), "g.IN1".into()),
+        LinkSpec::Pair("TRUE".into(), "g.IN3".into()),
+        LinkSpec::Pair("g.OUT".into(), "Y".into()),
+    ]);
+    spec.comments
+        .push(CommentSpec::new("g", "Compuerta propia"));
+    let section = generator.generate_section(&spec).unwrap();
+    let pins: Vec<&str> = section.layout.blocks[0]
+        .pins
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(pins, ["IN1", "IN2", "IN3", "OUT"]);
+    assert_eq!(section.layout.text_boxes.len(), 1);
+
+    // El motor de layout también se usa por separado.
+    let placement = sugiyama::layout(
+        &[Node::new(4, 3), Node::new(4, 3)],
+        &[Edge::new(0, 1, 1, 1)],
+        &Spacing::new(2, 3),
+    )
+    .unwrap();
+    assert!(placement.nodes[1].x > placement.nodes[0].x);
+}

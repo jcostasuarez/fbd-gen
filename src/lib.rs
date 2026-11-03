@@ -43,6 +43,12 @@ mod xml;
 #[cfg(test)]
 mod tests;
 
+// Los ejemplos de `docs/API.md` se compilan como doctests: la guía no puede quedar
+// desactualizada respecto de la API.
+#[cfg(doctest)]
+#[doc = include_str!("../docs/API.md")]
+struct ApiGuide;
+
 pub use consistency::ConsistencyConfig;
 pub use function_call::FunctionCallSpec;
 pub use generator::{

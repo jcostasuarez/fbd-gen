@@ -14,6 +14,7 @@ use crate::model::*;
 const STAGE: Stage = Stage::Normalize;
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NormalizeConfig {
     /// Umbral para reemplazar fan-out por variables cuando se conserva la ejecución.
     pub max_fanout: usize,

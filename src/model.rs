@@ -33,6 +33,7 @@ use crate::library::Kind;
 /// `16#FF`, `'texto'`) o, si no es ninguna de las dos cosas, una variable.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ProgramSpec {
     pub name: String,
     /// Tarea dueña de la sección (MAST por defecto).
@@ -68,15 +69,27 @@ impl ProgramSpec {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CommentSpec {
     /// Id de un bloque de la red comentada.
     pub at: String,
     pub text: String,
 }
 
+impl CommentSpec {
+    /// Comentario de la red que contiene al bloque `at`.
+    pub fn new(at: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            at: at.into(),
+            text: text.into(),
+        }
+    }
+}
+
 /// Criterios de partición en secciones (etapa 4).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PartitionSpec {
     /// Además del equipo (`group`), separar por etapa del flujo de señal (`stage`).
     pub by_stage: bool,
@@ -99,6 +112,7 @@ pub(crate) fn default_task() -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct VarSpec {
     pub name: String,
     #[serde(rename = "type")]
@@ -123,6 +137,7 @@ impl VarSpec {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct BlockSpec {
     pub id: String,
     #[serde(rename = "type")]
@@ -267,6 +282,7 @@ pub struct Wire {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct GeneratedVar {
     pub name: String,
     #[serde(rename = "type")]
@@ -347,6 +363,7 @@ impl std::fmt::Display for Stage {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub level: Level,
     pub stage: Stage,

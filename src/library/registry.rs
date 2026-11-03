@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use super::{BlockDef, Kind, Library, PinDef};
 use crate::iec::is_identifier as identifier;
+use crate::model::Dir;
 
 /// Tope del ancho de un bloque y de la última fila de sus pines, en celdas. La librería
 /// de Control Expert 15.1 llega a 20 de ancho y a la posición 34: el tope solo descarta
@@ -57,9 +58,16 @@ impl Error for LibraryError {
 impl BlockDef {
     /// Define la interfaz y geometría de una DFB; no contiene su implementación IEC.
     pub fn dfb(name: impl Into<String>, width: u32) -> Self {
+        Self::new(name, Kind::Dfb, width)
+    }
+
+    /// Interfaz vacía de un bloque del tipo `kind`, con `width` celdas de ancho medido.
+    /// Los pines se agregan con [`BlockDef::input`], [`BlockDef::output`],
+    /// [`BlockDef::in_out`] o [`BlockDef::pin`].
+    pub fn new(name: impl Into<String>, kind: Kind, width: u32) -> Self {
         Self {
             name: name.into(),
-            kind: Kind::Dfb,
+            kind,
             width,
             width_measured: true,
             typed_variant_of: None,
@@ -71,32 +79,27 @@ impl BlockDef {
 
     /// `position` empieza en 1. La fila de grilla incluye además la cabecera del bloque.
     pub fn input(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
-        self.inputs.push(PinDef {
-            name: name.into(),
-            ty: ty.into(),
-            position: Some(position),
-            extensible: None,
-        });
+        self.inputs.push(PinDef::new(name, ty, position));
         self
     }
 
     pub fn output(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
-        self.outputs.push(PinDef {
-            name: name.into(),
-            ty: ty.into(),
-            position: Some(position),
-            extensible: None,
-        });
+        self.outputs.push(PinDef::new(name, ty, position));
         self
     }
 
     pub fn in_out(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
-        self.in_outs.push(PinDef {
-            name: name.into(),
-            ty: ty.into(),
-            position: Some(position),
-            extensible: None,
-        });
+        self.in_outs.push(PinDef::new(name, ty, position));
+        self
+    }
+
+    /// Agrega un pin ya armado (por ejemplo, una entrada extensible) del lado `dir`.
+    pub fn pin(mut self, dir: Dir, pin: PinDef) -> Self {
+        match dir {
+            Dir::In => self.inputs.push(pin),
+            Dir::Out => self.outputs.push(pin),
+            Dir::InOut => self.in_outs.push(pin),
+        }
         self
     }
 }
