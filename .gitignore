@@ -1,0 +1,39 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Salidas generadas: secciones .xbd/.svg/.layout.json, manifiestos y proyectos de prueba
+/out/
+
+# Control Expert: proyectos, backups y exports que no son ejemplos versionados
+*.stu
+*.sta
+*.zef
+*.xef
+*.ZEF
+*.XEF
+*.stu.bak
+*.~*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Configuración local de esta máquina
+/.mcp.json
+/.claude/settings.local.json
+
+# Logs y temporales
+*.log
+*.tmp
+
+# Editores y sistema operativo
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

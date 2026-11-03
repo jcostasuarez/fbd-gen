@@ -1,0 +1,15 @@
+{
+  "name": "Motor_DFB",
+  "blocks": [
+    {"id": "motor", "type": "MotorPropio", "instance": "P201_Motor"},
+    {"id": "inv", "type": "NOT"}
+  ],
+  "variables": [{"name": "Estado", "type": "INT", "init": "0"}],
+  "links": [
+    ["Habilitar", "motor.Enable"],
+    ["FALSE", "motor.Reset"],
+    ["Estado", "motor.State"],
+    ["motor.Running", "inv.IN"],
+    ["inv.OUT", "Detenido"]
+  ]
+}

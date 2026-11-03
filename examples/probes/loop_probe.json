@@ -1,0 +1,16 @@
+{
+  "name": "Loop_Probe",
+  "variables": [{"name": "Marcha", "type": "BOOL"}],
+  "blocks": [
+    {"id": "start", "type": "AND"},
+    {"id": "seal", "type": "AND"},
+    {"id": "run", "type": "OR"}
+  ],
+  "links": [
+    ["Arranque", "start.IN1"], ["Permiso", "start.IN2"],
+    ["Parada_N", "seal.IN2"],
+    ["start.OUT", "run.IN1"], ["seal.OUT", "run.IN2"],
+    ["run.OUT", "seal.IN1"],
+    ["run.OUT", "Marcha"]
+  ]
+}

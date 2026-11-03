@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "name": "MotorPropio",
+      "kind": "DFB",
+      "width": 12,
+      "inputs": [
+        {"name": "Enable", "type": "BOOL", "position": 1},
+        {"name": "Reset", "type": "BOOL", "position": 2}
+      ],
+      "outputs": [
+        {"name": "Running", "type": "BOOL", "position": 1}
+      ],
+      "inOuts": [
+        {"name": "State", "type": "INT", "position": 3}
+      ]
+    }
+  ]
+}

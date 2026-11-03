@@ -1,0 +1,22 @@
+{
+  "name": "FanoutOrder",
+  "variables": [{"name": "X", "type": "BOOL"}],
+  "blocks": [
+    {"id": "a", "type": "NOT"},
+    {"id": "b", "type": "NOT"},
+    {"id": "c", "type": "NOT"},
+    {"id": "d", "type": "NOT"},
+    {"id": "src", "type": "NOT"}
+  ],
+  "links": [
+    ["X", "src.IN"],
+    ["src.OUT", "a.IN"],
+    ["src.OUT", "b.IN"],
+    ["src.OUT", "c.IN"],
+    ["src.OUT", "d.IN"],
+    ["a.OUT", "A"],
+    ["b.OUT", "B"],
+    ["c.OUT", "C"],
+    ["d.OUT", "D"]
+  ]
+}

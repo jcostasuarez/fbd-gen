@@ -1,0 +1,5 @@
+# Finales de línea LF en el repo, sin importar core.autocrlf
+* text=auto eol=lf
+
+# Librería de bloques exportada de Control Expert: no mostrar diffs línea a línea
+efb_dimensions.json -diff linguist-generated

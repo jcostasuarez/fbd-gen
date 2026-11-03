@@ -1,0 +1,25 @@
+[package]
+name = "fbd-gen"
+version = "0.1.0"
+edition = "2024"
+description = "Genera secciones FBD de Control Expert a partir de un grafo semántico, con layout Sugiyama en celdas enteras"
+license = "MIT"
+repository = "https://github.com/jcostasuarez/fbd-gen"
+
+[features]
+default = ["cli", "embedded-library"]
+# Ejecutable de línea de comandos. Desactivarlo al usar el crate como librería.
+cli = ["dep:clap", "embedded-library"]
+# Incluye efb_dimensions.json en el binario (`Library::embedded`, ~0,5 MB).
+embedded-library = []
+
+[[bin]]
+name = "fbd-gen"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

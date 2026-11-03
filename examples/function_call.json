@@ -1,0 +1,12 @@
+{
+  "name": "P101_Delay",
+  "function": "TON",
+  "instance": "P101_Timer",
+  "inputs": {
+    "IN": "P101_Start",
+    "PT": "T#3s"
+  },
+  "outputs": {
+    "Q": "P101_Run"
+  }
+}

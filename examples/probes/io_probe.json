@@ -1,0 +1,31 @@
+{
+  "name": "IO_Probe",
+  "variables": [
+    {"name": "Contador", "type": "INT"},
+    {"name": "TIC_Para", "type": "Para_PIDFF"},
+    {"name": "TIC2_Para", "type": "Para_PIDFF"}
+  ],
+  "blocks": [
+    {"id": "inc", "type": "INC_INT", "group": "IO_A"},
+    {"id": "pid", "type": "PIDFF", "instance": "TIC101", "group": "IO_A"},
+    {"id": "pid2", "type": "PIDFF", "instance": "TIC102", "group": "IO_B"},
+    {"id": "lim", "type": "LIMIT", "group": "IO_B"}
+  ],
+  "links": [
+    ["Contador", "inc.INOUT"],
+    ["TT101", "pid.PV"],
+    ["SP101", "pid.SP"],
+    ["TIC_Para", "pid.PARA"],
+    ["TIC101_Man", "pid.MAN_AUTO"],
+    ["TV101", "pid.OUT"],
+    ["pid.OUTD", "TIC101_dOut"],
+    ["TT102", "pid2.PV"],
+    ["SP102", "pid2.SP"],
+    ["TIC2_Para", "pid2.PARA"],
+    ["TV102_Mem", "pid2.OUT"],
+    ["pid2.OUT", "lim.IN"],
+    ["0.0", "lim.MN"],
+    ["100.0", "lim.MX"],
+    ["lim.OUT", "TV102"]
+  ]
+}
