@@ -245,6 +245,19 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 CI (`.github/workflows/ci.yml`) corre lo mismo para cada combinación de features y
 compila con la versión mínima de Rust declarada en `rust-version` (1.88).
 
+La entrada la escribe un LLM, así que el generador no debe entrar en pánico con ningún
+JSON: un error de validación es un resultado válido, un pánico es un bug. `fuzz/` tiene
+un target de [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) que prueba
+`ProgramSpec`, `SectionSpec` y `FunctionCallSpec` arbitrarios (requiere nightly):
+
+```bash
+cargo +nightly fuzz run generate -- -max_total_time=300
+```
+
+Conviene empezar con los ejemplos como corpus inicial:
+`mkdir -p fuzz/corpus/generate && cp examples/*.json examples/probes/*.json fuzz/corpus/generate/`.
+CI lo corre un minuto en cada cambio.
+
 ## Licencia
 
 MIT (ver `LICENSE`). `efb_dimensions.json` contiene solo la interfaz de los bloques de

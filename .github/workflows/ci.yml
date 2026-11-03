@@ -65,3 +65,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
+
+  # La entrada viene de un LLM: ningún JSON debe hacer entrar en pánico al generador.
+  fuzz:
+    runs-on: ubuntu-latest
+    # `-D warnings` no aplica a cargo-fuzz ni a libfuzzer, que se compilan acá.
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Corpus inicial con los ejemplos
+        run: |
+          mkdir -p fuzz/corpus/generate
+          cp examples/*.json examples/probes/*.json fuzz/corpus/generate/
+          rm fuzz/corpus/generate/custom_blocks.json
+      - run: cargo fuzz run generate -- -max_len=8192 -max_total_time=60
