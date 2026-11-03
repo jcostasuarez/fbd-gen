@@ -125,15 +125,18 @@ intencionales de realimentación conservan su lectura del scan anterior.
 | Etapa | Módulo |
 |---|---|
 | 1. Validación contra la librería | `resolve.rs` |
-| 2. Consistencia entre equipos (hash Weisfeiler-Lehman) | `consistency.rs` |
-| 3. Partición: equipo, etapa, tamaño; chequeo de cohesión | `partition.rs` |
-| 4. Orden de secciones por dependencias; ciclos reportados | `partition.rs` |
-| 5. Normalización: cable o variable (realimentación, fan-out) | `normalize.rs` |
-| 6. Redes (componentes conexos, dependencias de fan-out, desempate por orden del modelo) con comentario de red | `normalize.rs`, `layout.rs` |
-| 7. Sugiyama por red y permutación de entradas conmutativas | `sugiyama/`, `layout.rs` |
-| 8. Grilla, apilado de redes y validación de la geometría | `layout.rs` |
-| Inferencia de tipos de variables | `types.rs` |
+| 2. Inferencia de tipos, una sola vez sobre todo el programa (cada pin queda con su tipo) | `types.rs` |
+| 3. Consistencia entre equipos (hash Weisfeiler-Lehman) | `consistency.rs` |
+| 4. Partición: equipo, etapa, tamaño; chequeo de cohesión. Produce subgrafos ya resueltos y tipados, con los cables entre secciones convertidos en variables | `partition.rs` |
+| 5. Orden de secciones por dependencias; ciclos reportados | `partition.rs` |
+| 6. Normalización: cable o variable (realimentación, fan-out) | `normalize.rs` |
+| 7. Redes (componentes conexos, dependencias de fan-out, desempate por orden del modelo) con comentario de red | `normalize.rs`, `layout.rs` |
+| 8. Sugiyama por red y permutación de entradas conmutativas | `sugiyama/`, `layout.rs` |
+| 9. Grilla, apilado de redes y validación de la geometría | `layout.rs` |
 | Export a XML de intercambio FBD | `xef.rs` |
+
+Las etapas 6 a 9 y el export son comunes a `generate_program`, `generate_section` y
+`generate_function`; una sección nunca se vuelve a validar ni a tipar.
 
 ## Motor de layout
 

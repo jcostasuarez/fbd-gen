@@ -1,4 +1,4 @@
-//! Etapa 5: normalizaciones que bajan la complejidad del dibujo antes del layout.
+//! Etapa 6: normalizaciones que bajan la complejidad del dibujo antes del layout.
 //! Decide cable o variable: realimentaciones y fan-out alto.
 //!
 //! Una salida puede escribir una variable y a la vez tener cables (verificado en Control
@@ -139,8 +139,10 @@ fn to_variable(
                 n += 1;
             }
             names.insert(name.to_ascii_uppercase());
-            // El tipo definitivo lo fija la inferencia de tipos (types.rs).
-            let ty = section.pin(out).ty.clone();
+            // La inferencia (types.rs) corre antes y deja el tipo concreto en el pin. Si
+            // no lo pudo deducir, queda el genérico y `types::section_vars` lo reporta.
+            let pin = section.pin(out);
+            let ty = pin.inferred.clone().unwrap_or_else(|| pin.ty.clone());
             section.generated_vars.push(GeneratedVar {
                 name: name.clone(),
                 ty,
@@ -233,7 +235,7 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
     comp
 }
 
-/// Etapa 6: redes = componentes conexos por cables, ordenadas por las dependencias
+/// Etapa 7: redes = componentes conexos por cables, ordenadas por las dependencias
 /// anteriores al corte de fan-out. Los empates respetan el orden del modelo.
 pub fn networks(section: &Section) -> Vec<Vec<usize>> {
     ordered_networks(section).expect("la normalización conserva las dependencias de ejecución")

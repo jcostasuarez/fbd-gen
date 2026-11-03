@@ -95,8 +95,8 @@ fn partitioned(json: &str) -> fbd_gen::partition::Partition {
     let s = spec(json);
     let mut d = Diagnostics::default();
     let mut section = resolve::resolve(&s, lib(), &mut d).unwrap();
-    let (vars, pins) = types::infer_all(&mut section, &s.variables, &mut d);
-    let result = fbd_gen::partition::partition(&s, &section, &vars, &pins, &mut d);
+    let vars = types::infer(&mut section, &s.variables, &mut d);
+    let result = fbd_gen::partition::partition(&section, &s.partition, &vars, &mut d);
     assert!(!d.has_errors(), "{:?}", d.0);
     let unique: HashSet<String> = result
         .sections
@@ -440,5 +440,51 @@ fn derived_type_mismatch_is_only_a_warning() {
             .diagnostics
             .iter()
             .any(|d| d.level == Level::Warning && d.message.contains("tipos incompatibles"))
+    );
+}
+
+#[test]
+fn program_diagnostics_are_not_repeated_in_sections() {
+    // Antes la partición volvía a resolver y tipar cada sección y el aviso salía dos veces.
+    let s = spec(
+        r#"{"name":"T","variables":[{"name":"V","type":"ARRUINT2"}],
+        "blocks":[{"id":"a","type":"TON","group":"A"},{"id":"n","type":"NOT","group":"B"}],
+        "links":[["Start","a.IN"],["V","a.PT"],["a.Q","n.IN"],["n.OUT","Out1"]]}"#,
+    );
+    let result = generator().generate_program(&s).unwrap();
+    assert_eq!(result.sections.len(), 2);
+    let types = |d: &[Diagnostic]| d.iter().filter(|d| d.stage == "types").count();
+    assert_eq!(types(&result.diagnostics), 1);
+    for section in &result.sections {
+        assert_eq!(types(&section.diagnostics), 0, "{:?}", section.diagnostics);
+        assert!(section.diagnostics.iter().all(|d| d.stage != "validate"));
+        assert_eq!(section.layout.diagnostics.len(), section.diagnostics.len());
+    }
+    // El cable entre secciones es una variable declarada con el tipo inferido.
+    let link = result.sections[1]
+        .variables
+        .iter()
+        .find(|v| v.name == "a_Q")
+        .unwrap();
+    assert_eq!(link.ty, "BOOL");
+    assert_eq!(link.comment.as_deref(), Some("Enlace A -> B"));
+}
+
+#[test]
+fn fanout_variable_without_a_deducible_type_is_an_error() {
+    // MOVE es genérico de punta a punta: la variable del fan-out no tiene tipo.
+    let s = spec(
+        r#"{"name":"T","blocks":[{"id":"m","type":"MOVE"},
+        {"id":"a","type":"MOVE"},{"id":"b","type":"MOVE"},{"id":"c","type":"MOVE"},{"id":"d","type":"MOVE"}],
+        "links":[["m.OUT","a.IN"],["m.OUT","b.IN"],["m.OUT","c.IN"],["m.OUT","d.IN"]]}"#,
+    );
+    let error = generator().generate_program(&s).unwrap_err();
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|d| d.level == Level::Error && d.message.starts_with("m_OUT: no se pudo deducir")),
+        "{:?}",
+        error.diagnostics()
     );
 }

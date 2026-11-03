@@ -74,7 +74,7 @@ pub struct CommentSpec {
     pub text: String,
 }
 
-/// Criterios de partición en secciones (etapa 3).
+/// Criterios de partición en secciones (etapa 4).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PartitionSpec {
@@ -220,6 +220,9 @@ pub struct Pin {
     pub param_in: Option<Param>,
     /// Parámetro del lado derecho (salidas, IN_OUT).
     pub param_out: Option<Param>,
+    /// Tipo concreto deducido por la inferencia (`types`), si se pudo deducir. Viaja con
+    /// el pin cuando la partición copia el bloque a su sección.
+    pub inferred: Option<String>,
 }
 
 #[derive(Debug, Clone)]

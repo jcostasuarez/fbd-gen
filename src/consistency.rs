@@ -1,4 +1,4 @@
-//! Etapa 2: control de consistencia entre equipos (`group`) por hash de subgrafos.
+//! Etapa 3: control de consistencia entre equipos (`group`) por hash de subgrafos.
 //!
 //! Cada equipo se reduce a un grafo etiquetado (tipo de bloque, pines, cables internos,
 //! variables con el nombre del equipo reemplazado por `{G}`) y se le calcula un hash

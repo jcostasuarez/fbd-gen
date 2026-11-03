@@ -111,6 +111,7 @@ fn build_block(
             permutable,
             param_in: None,
             param_out: None,
+            inferred: None,
         });
     };
     for (i, p) in def.inputs.iter().enumerate() {

@@ -1,11 +1,11 @@
-//! Inferencia de tipos de las variables para poder declararlas en el `dataBlock`.
+//! Etapa 2: inferencia de tipos de las variables para poder declararlas en el `dataBlock`.
 //!
 //! Unificación simple: dentro de una EF, los pines con el mismo tipo genérico (`ANY_BIT`,
 //! `ANY_NUM`...) comparten tipo; un cable une sus dos pines; una variable une todos los
 //! pines donde aparece. Los tipos concretos (pines, declaraciones) son fuertes; los
 //! literales sin prefijo solo sugieren (`85.0` -> REAL); los tipados fijan su tipo.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::library::Kind;
 use crate::model::*;
@@ -190,20 +190,14 @@ pub struct TypedVar {
     pub decl: Option<VarSpec>,
 }
 
+/// Tipa las variables de la sección y deja en cada pin su tipo concreto
+/// ([`Pin::inferred`]). Corre una sola vez, sobre el grafo completo: la partición y la
+/// normalización solo copian esos tipos.
 pub fn infer(
     section: &mut Section,
     declared: &[VarSpec],
     diags: &mut Diagnostics,
 ) -> Vec<TypedVar> {
-    infer_all(section, declared, diags).0
-}
-
-/// Como [`infer`], y además el tipo resuelto de cada pin (si se pudo deducir).
-pub fn infer_all(
-    section: &mut Section,
-    declared: &[VarSpec],
-    diags: &mut Diagnostics,
-) -> (Vec<TypedVar>, HashMap<PinRef, String>) {
     // Nodos: un nodo por pin, después uno por variable.
     let mut pin_node: HashMap<PinRef, usize> = HashMap::new();
     for (bi, b) in section.blocks.iter().enumerate() {
@@ -332,10 +326,9 @@ pub fn infer_all(
                 Some(if w.contains(&"REAL") { "REAL" } else { w[0] }.to_string())
             })
     };
-    let pin_types: HashMap<PinRef, String> = pin_node
-        .iter()
-        .filter_map(|(&r, &n)| class_type(uf.find(n)).map(|t| (r, t)))
-        .collect();
+    for (&r, &n) in &pin_node {
+        section.pin_mut(r).inferred = class_type(uf.find(n));
+    }
 
     // Validar también clases sin variables (por ejemplo, un literal en un pin).
     // Se comprueban todos los tipos fuertes: uno válido no debe ocultar otro inválido.
@@ -385,5 +378,54 @@ pub fn infer_all(
             g.ty = v.ty.clone();
         }
     }
-    (result, pin_types)
+    result
+}
+
+/// Variables que declara una sección ya normalizada, en orden de primera aparición (el
+/// orden del `dataBlock`). El tipo y la declaración salen de `known` (las variables del
+/// programa y las de enlace entre secciones) o de las variables que creó la
+/// normalización; el nombre se escribe como aparece en la sección.
+pub fn section_vars(
+    section: &Section,
+    known: &HashMap<String, TypedVar>,
+    diags: &mut Diagnostics,
+) -> Vec<TypedVar> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    let params = section
+        .blocks
+        .iter()
+        .flat_map(|b| &b.pins)
+        .flat_map(|p| [&p.param_in, &p.param_out])
+        .flatten();
+    for param in params {
+        let Param::Var(name) = param else { continue };
+        let key = name.to_ascii_uppercase();
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let typed = known
+            .get(&key)
+            .map(|t| (t.ty.clone(), t.decl.clone()))
+            .or_else(|| {
+                section
+                    .generated_vars
+                    .iter()
+                    .find(|g| g.name.eq_ignore_ascii_case(name) && !is_generic(&g.ty))
+                    .map(|g| (g.ty.clone(), None))
+            });
+        match typed {
+            Some((ty, decl)) => result.push(TypedVar {
+                name: name.clone(),
+                ty,
+                decl,
+            }),
+            None => diags.push(
+                Level::Error,
+                STAGE,
+                format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
+            ),
+        }
+    }
+    result
 }

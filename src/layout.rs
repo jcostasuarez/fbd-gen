@@ -1,4 +1,4 @@
-//! Etapas 7 y 8: Sugiyama por red (`sugiyama`, en celdas enteras), permutación de
+//! Etapas 8 y 9: Sugiyama por red (`sugiyama`, en celdas enteras), permutación de
 //! entradas conmutativas, comentarios de red y apilado de redes en la hoja.
 //!
 //! Antes de exportar se valida la grilla: aunque el motor ya la garantiza, un XML con
@@ -422,6 +422,7 @@ mod tests {
             permutable: false,
             param_in: None,
             param_out: None,
+            inferred: None,
         };
         Block {
             id: id.into(),
