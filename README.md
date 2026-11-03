@@ -52,6 +52,22 @@ Escribe en `out/<programa>/`, por cada sección:
 
 y `manifest.json` con las secciones en orden de ejecución y los diagnósticos de programa.
 
+Otras opciones de la CLI:
+
+- `-` como entrada lee el grafo de la entrada estándar.
+- `--check` valida y genera en memoria, sin escribir archivos.
+- `--format json` escribe en stdout un solo objeto JSON: `status` (`ok`, `invalid` o
+  `error`), las secciones con sus archivos y los diagnósticos completos. Pensado para
+  que otra herramienta o un LLM lea el resultado sin interpretar texto.
+
+```bash
+cat grafo.json | fbd-gen - --check --format json
+```
+
+El código de salida es 0 si genera, 1 si la entrada es inválida (incluido un JSON mal
+formado o con un campo desconocido), 2 si los argumentos son incorrectos y 3 ante un
+error de lectura, escritura, librería o un error interno.
+
 Cada diagnóstico trae un `code` estable (`unknown_pin`, `type_mismatch`...) y una
 `location` con el bloque, pin, índice de link o variable de la entrada que lo causó, para
 que un programa (o el LLM que generó el grafo) pueda corregirlo sin interpretar el

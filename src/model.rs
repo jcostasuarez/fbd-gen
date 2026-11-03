@@ -394,6 +394,9 @@ macro_rules! diagnostic_codes {
 
 diagnostic_codes! {
     // --- Validación (Stage::Validate) ---
+    /// El texto no es JSON válido, le falta un campo obligatorio o tiene uno desconocido
+    /// (`instace`, `partiton`...). El mensaje trae la línea y la columna.
+    InvalidJson = "invalid_json",
     /// El nombre del programa o de la sección no es un identificador IEC.
     InvalidProgramName = "invalid_program_name",
     /// El grafo no tiene bloques.

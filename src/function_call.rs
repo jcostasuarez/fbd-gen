@@ -42,6 +42,11 @@ pub struct FunctionCallSpec {
 }
 
 impl FunctionCallSpec {
+    /// Como [`ProgramSpec::from_json`], para una llamada.
+    pub fn from_json(json: &str) -> Result<Self, GenerationError> {
+        crate::generator::from_json(json)
+    }
+
     pub fn new(name: impl Into<String>, function: impl Into<String>) -> Self {
         Self {
             name: name.into(),

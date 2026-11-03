@@ -34,7 +34,36 @@ pub struct SectionSpec {
     pub comments: Vec<CommentSpec>,
 }
 
+/// Deserializa una entrada; un JSON inválido es `InvalidInput` con `invalid_json`, igual
+/// que cualquier otro error de la entrada.
+pub(crate) fn from_json<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, GenerationError> {
+    serde_json::from_str(json).map_err(|error| GenerationError::InvalidInput {
+        scope: "json".into(),
+        diagnostics: vec![Diagnostic::new(
+            Level::Error,
+            model::Stage::Validate,
+            model::DiagnosticCode::InvalidJson,
+            error.to_string(),
+        )],
+    })
+}
+
+impl ProgramSpec {
+    /// Lee el grafo desde JSON. A diferencia de `serde_json::from_str`, un error de
+    /// formato (sintaxis, campo faltante o desconocido) llega como
+    /// [`GenerationError::InvalidInput`] con el código `invalid_json`, igual que los
+    /// errores de validación: un cliente los trata todos del mismo modo.
+    pub fn from_json(json: &str) -> Result<Self, GenerationError> {
+        from_json(json)
+    }
+}
+
 impl SectionSpec {
+    /// Como [`ProgramSpec::from_json`], para una sola sección.
+    pub fn from_json(json: &str) -> Result<Self, GenerationError> {
+        from_json(json)
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -214,8 +243,10 @@ impl fmt::Display for GenerationError {
                 Ok(())
             }
             Self::InvalidConfig { message } => write!(f, "configuración inválida: {message}"),
-            Self::Library(source) => write!(f, "{source}"),
-            Self::Layout { section, source } => write!(f, "layout de {section}: {source}"),
+            // Transparente: el mismo mensaje y la misma causa que el error de librería.
+            Self::Library(error) => write!(f, "{error}"),
+            // La causa va por `source()`, no repetida acá (ver `Error::source`).
+            Self::Layout { section, .. } => write!(f, "no se pudo dibujar la sección {section}"),
             Self::Internal { section, message } => {
                 write!(f, "error interno en {section}: {message} (bug de fbd-gen)")
             }
@@ -226,7 +257,7 @@ impl fmt::Display for GenerationError {
 impl Error for GenerationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Library(source) => Some(source),
+            Self::Library(error) => error.source(),
             Self::Layout { source, .. } => Some(source.as_ref()),
             _ => None,
         }

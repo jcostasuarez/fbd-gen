@@ -32,8 +32,9 @@ impl fmt::Display for LayoutError {
 
 impl Error for LayoutError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // `Engine` es transparente: su mensaje ya es el del motor.
         match self {
-            Self::Engine(e) => Some(e),
+            Self::Engine(e) => e.source(),
             Self::Grid(_) => None,
         }
     }

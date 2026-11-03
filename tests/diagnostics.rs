@@ -195,3 +195,47 @@ fn serialized_diagnostics_omit_empty_location_fields() {
     let json = serde_json::to_value(find(&diags, DiagnosticCode::EmptyGraph)).unwrap();
     assert!(json.get("location").is_none(), "{json}");
 }
+
+#[test]
+fn malformed_json_is_an_invalid_input_with_its_own_code() {
+    for (json, hint) in [
+        (
+            r#"{"name":"P","blocks":[{"id":"n","type":"NOT","instace":"x"}]}"#,
+            "instace",
+        ),
+        (r#"{"name":"P","blocks":[{"id":"n"}]}"#, "type"),
+        (r#"{"name":"P","blocks":["#, "EOF"),
+    ] {
+        let error = ProgramSpec::from_json(json).unwrap_err();
+        let d = find(error.diagnostics(), DiagnosticCode::InvalidJson);
+        assert_eq!(d.level, Level::Error);
+        assert!(d.message.contains(hint), "{}", d.message);
+        assert!(d.location.is_empty());
+    }
+    let spec =
+        ProgramSpec::from_json(r#"{"name":"P","blocks":[{"id":"n","type":"NOT"}]}"#).unwrap();
+    assert_eq!(spec.blocks.len(), 1);
+}
+
+/// Cada nivel de la cadena `source()` aporta su propio mensaje: ninguno repite el de su
+/// causa, así un formateador de cadenas (`anyhow` con `{:#}`) no lo muestra dos veces.
+#[test]
+fn error_chains_do_not_repeat_their_causes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let errors = [
+        Generator::from_library_file(root.join("no_existe.json")).unwrap_err(),
+        Generator::from_library_file(root.join("README.md")).unwrap_err(),
+    ];
+    for error in errors {
+        let mut chain = vec![error.to_string()];
+        let mut source = std::error::Error::source(&error);
+        while let Some(s) = source {
+            chain.push(s.to_string());
+            source = s.source();
+        }
+        assert!(chain.len() >= 2, "sin causa: {chain:?}");
+        for pair in chain.windows(2) {
+            assert!(!pair[0].contains(&pair[1]), "causa repetida: {chain:?}");
+        }
+    }
+}

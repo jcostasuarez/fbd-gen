@@ -32,6 +32,12 @@ for section in program.sections {
 | `register_block` | `BlockDefinition` | `Result<(), LibraryError>` |
 | `register_blocks_from_file` | Ruta de un catálogo adicional | `Result<(), LibraryError>` |
 
+`ProgramSpec::from_json`, `SectionSpec::from_json` y `FunctionCallSpec::from_json` leen
+la entrada desde JSON. A diferencia de `serde_json::from_str`, un error de formato
+(sintaxis, campo faltante o desconocido como `instace`) llega como
+`GenerationError::InvalidInput` con el código `invalid_json`, igual que los errores de
+validación, así un cliente los trata a todos del mismo modo.
+
 `ProgramSpec` contiene `name`, `task`, `variables`, `blocks`, `links`, `comments` y
 `partition`. Verifica consistencia entre equipos, divide por grupos/etapas/tamaño y
 ordena las secciones por dependencias.
@@ -107,7 +113,9 @@ La generación no entra en pánico: el código de producción no tiene `unwrap`,
 conviene reportarlo con la entrada que lo produce.
 
 `GenerationError::diagnostics()` da acceso a los diagnósticos de una entrada inválida.
-Los fallos operativos conservan su causa mediante `std::error::Error::source()`.
+Los fallos operativos conservan su causa mediante `std::error::Error::source()`, y cada
+nivel de la cadena tiene su propio mensaje sin repetir el de su causa: para mostrarlos
+todos se recorre la cadena (por ejemplo, `anyhow` con `{:#}`).
 Si falla una sección, `generate_program` devuelve `Err`; no publica un programa parcial.
 
 ## Diagnósticos

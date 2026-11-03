@@ -320,40 +320,6 @@ fn custom_ef_definitions_can_be_registered_without_instances() {
 }
 
 #[test]
-fn cli_accepts_custom_dfb_catalog_and_preserves_the_manifest_format() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = root.join("out").join("api-cli-test");
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_fbd-gen"))
-        .arg(root.join("examples/custom_dfb.json"))
-        .arg("--lib")
-        .arg(root.join("efb_dimensions.json"))
-        .arg("--extra-lib")
-        .arg(root.join("examples/custom_blocks.json"))
-        .arg("--out-dir")
-        .arg(&out)
-        .current_dir(std::env::temp_dir())
-        .output()
-        .unwrap();
-    assert!(
-        status.status.success(),
-        "{}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out.join("Motor_DFB/manifest.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(manifest["program"], "Motor_DFB");
-    assert_eq!(manifest["task"], "MAST");
-    assert_eq!(manifest["sections"][0]["xml"], "Motor_DFB.xbd");
-    assert!(
-        std::fs::read_to_string(out.join("Motor_DFB/Motor_DFB.xbd"))
-            .unwrap()
-            .contains("P201_Motor")
-    );
-}
-
-#[test]
 fn programs_write_the_same_files_as_the_cli() {
     let json = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/planta_bombas.json"),

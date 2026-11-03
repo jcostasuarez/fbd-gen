@@ -35,8 +35,9 @@ pub enum LibraryError {
 impl fmt::Display for LibraryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(f, "no se pudo leer {}: {source}", path.display()),
-            Self::Json(source) => write!(f, "JSON de librería inválido: {source}"),
+            // La causa (`io::Error`, `serde_json::Error`) va por `source()`.
+            Self::Io { path, .. } => write!(f, "no se pudo leer {}", path.display()),
+            Self::Json(_) => write!(f, "JSON de librería inválido"),
             Self::DuplicateBlock { name } => write!(f, "el bloque {name} ya existe en la librería"),
             Self::InvalidDefinition { block, message } => {
                 write!(f, "definición {block} inválida: {message}")
