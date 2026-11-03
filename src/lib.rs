@@ -60,8 +60,9 @@ pub use library::{
     LibraryError, PinDef as PinDefinition,
 };
 pub use model::{
-    BlockSpec, CommentSpec, Diagnostic, Dir as PinDirection, GeneratedVar as GeneratedVariable,
-    Level, LinkSpec, Param as Parameter, PartitionSpec, ProgramSpec, Stage, VarSpec,
+    BlockSpec, CommentSpec, Diagnostic, DiagnosticCode, DiagnosticLocation, Dir as PinDirection,
+    GeneratedVar as GeneratedVariable, Level, LinkSpec, Param as Parameter, PartitionSpec,
+    ProgramSpec, Stage, VarSpec,
 };
 pub use normalize::NormalizeConfig;
 pub use output::{

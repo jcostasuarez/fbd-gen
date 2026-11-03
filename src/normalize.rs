@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::graph::{OnCycle, UnionFind, topo_order};
 use crate::iec::{sanitize, unique_name};
-use crate::model::*;
+use crate::model::{DiagnosticCode as Code, *};
 
 const STAGE: Stage = Stage::Normalize;
 
@@ -36,6 +36,7 @@ pub fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mut Diagn
             section,
             w.from,
             Some(w.to),
+            Code::FeedbackCut,
             "realimentación",
             &mut names,
             diags,
@@ -61,18 +62,29 @@ pub fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mut Diagn
             let can_order = ordered_networks(section).is_some();
             section.wires = wires;
             if !can_order {
-                diags.push(
-                    Level::Info,
-                    STAGE,
-                    format!(
-                        "{}: se conserva fan-out {fanout} para respetar el orden de ejecución",
-                        section.pin_path(out)
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Info,
+                        STAGE,
+                        Code::FanoutKept,
+                        format!(
+                            "{}: se conserva fan-out {fanout} para respetar el orden de ejecución",
+                            section.pin_path(out)
+                        ),
+                    )
+                    .at_pin(section, out);
                 continue;
             }
             let reason = format!("fan-out {fanout} > {}", cfg.max_fanout);
-            to_variable(section, out, None, &reason, &mut names, diags);
+            to_variable(
+                section,
+                out,
+                None,
+                Code::FanoutToVariable,
+                &reason,
+                &mut names,
+                diags,
+            );
         }
     }
 }
@@ -100,6 +112,7 @@ fn to_variable(
     section: &mut Section,
     out: PinRef,
     only: Option<PinRef>,
+    code: Code,
     reason: &str,
     names: &mut HashSet<String>,
     diags: &mut Diagnostics,
@@ -140,16 +153,20 @@ fn to_variable(
         section.pin_mut(*t).param_in = Some(Param::Var(name.clone()));
     }
     section.wires.retain(|w| !cut(w));
-    diags.push(
-        Level::Info,
-        STAGE,
-        format!(
-            "{} -> variable {} ({reason}, {} destino/s)",
-            section.pin_path(out),
-            name,
-            targets.len()
-        ),
-    );
+    diags
+        .push(
+            Level::Info,
+            STAGE,
+            code,
+            format!(
+                "{} -> variable {} ({reason}, {} destino/s)",
+                section.pin_path(out),
+                name,
+                targets.len()
+            ),
+        )
+        .at_pin(section, out)
+        .at_variable(name);
 }
 
 /// Cables que cierran un ciclo. Dentro de cada componente fuertemente conexo se cortan

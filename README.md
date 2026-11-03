@@ -52,6 +52,11 @@ Escribe en `out/<programa>/`, por cada sección:
 
 y `manifest.json` con las secciones en orden de ejecución y los diagnósticos de programa.
 
+Cada diagnóstico trae un `code` estable (`unknown_pin`, `type_mismatch`...) y una
+`location` con el bloque, pin, índice de link o variable de la entrada que lo causó, para
+que un programa (o el LLM que generó el grafo) pueda corregirlo sin interpretar el
+mensaje. Ver [diagnósticos](docs/API.md#diagnósticos).
+
 ### Verificación en Control Expert
 
 `scripts/ce_check.py` automatiza Control Expert mediante el servidor `control-expert-mcp`

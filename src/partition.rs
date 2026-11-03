@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::graph::{OnCycle, topo_order as topo_order_of};
 use crate::iec::{sanitize, unique_name};
-use crate::model::*;
+use crate::model::{DiagnosticCode as Code, *};
 use crate::types::TypedVar;
 
 const STAGE: Stage = Stage::Partition;
@@ -116,7 +116,7 @@ pub fn partition(
     for ((group, stage), blocks) in keys.into_iter().zip(members) {
         let key = sanitize(&match stage {
             Some(stage) => format!("{group}_{stage}"),
-            None => group,
+            None => group.clone(),
         });
         if blocks.len() > cfg.max_blocks.max(1) {
             let chunks = split(
@@ -124,16 +124,19 @@ pub fn partition(
                 &topo_order(section, &blocks),
                 cfg.max_blocks.max(1),
             );
-            diags.push(
-                Level::Info,
-                STAGE,
-                format!(
-                    "{key}: {} bloques > {}, dividida en {} secciones",
-                    blocks.len(),
-                    cfg.max_blocks,
-                    chunks.len()
-                ),
-            );
+            diags
+                .push(
+                    Level::Info,
+                    STAGE,
+                    Code::SectionSplit,
+                    format!(
+                        "{key}: {} bloques > {}, dividida en {} secciones",
+                        blocks.len(),
+                        cfg.max_blocks,
+                        chunks.len()
+                    ),
+                )
+                .at_group(&group);
             for (i, c) in chunks.into_iter().enumerate() {
                 names.push(format!("{key}_{}", i + 1));
                 groups.push(c);
@@ -162,11 +165,14 @@ pub fn partition(
             }
             suffix += 1;
         }
-        diags.push(
-            Level::Info,
-            STAGE,
-            format!("nombre de sección {base} repetido; se usa {name}"),
-        );
+        diags
+            .push(
+                Level::Info,
+                STAGE,
+                Code::SectionRenamed,
+                format!("nombre de sección {base} repetido; se usa {name}"),
+            )
+            .at_section(name.as_str());
     }
     let mut sec_of = vec![0; section.blocks.len()];
     for (s, blocks) in groups.iter().enumerate() {
@@ -203,11 +209,14 @@ pub fn partition(
             diags.push(
                     Level::Warning,
                     STAGE,
+                    Code::WeakCohesion,
                     format!(
                         "{} está en {} pero tiene {n} conexiones con {} y {own} con la suya; revisar su `group`",
                         blk.id, names[sec_of[b]], names[s]
                     ),
-                );
+                )
+                .at_block(&blk.id)
+                .at_section(&names[sec_of[b]]);
         }
     }
 
@@ -300,30 +309,40 @@ pub fn partition(
                                 init: None,
                             }),
                         }),
-                        None => diags.push(
-                            Level::Error,
-                            STAGE,
-                            format!(
-                                "{name}: no se pudo deducir el tipo del enlace entre secciones"
-                            ),
-                        ),
+                        None => {
+                            diags
+                                .push(
+                                    Level::Error,
+                                    STAGE,
+                                    Code::UndeducibleType,
+                                    format!(
+                                        "{name}: no se pudo deducir el tipo del enlace entre secciones"
+                                    ),
+                                )
+                                .at_pin(section, w.from)
+                                .at_variable(&name);
+                        }
                     }
                 }
                 cross_var.insert(w.from, name.clone());
                 name
             }
         };
-        diags.push(
-            Level::Info,
-            STAGE,
-            format!(
-                "{} -> {} cruza de {} a {}: variable {var}",
-                section.pin_path(w.from),
-                section.pin_path(w.to),
-                names[from_sec],
-                names[to_sec]
-            ),
-        );
+        diags
+            .push(
+                Level::Info,
+                STAGE,
+                Code::CrossSectionLink,
+                format!(
+                    "{} -> {} cruza de {} a {}: variable {var}",
+                    section.pin_path(w.from),
+                    section.pin_path(w.to),
+                    names[from_sec],
+                    names[to_sec]
+                ),
+            )
+            .at_pin(section, w.from)
+            .at_variable(&var);
         parts[to_sec].pin_mut(to_local(w.to)).param_in = Some(Param::Var(var));
     }
 
@@ -346,7 +365,8 @@ pub fn partition(
 
     // --- Etapa 5: orden de las secciones -------------------------------------------
     let n = parts.len();
-    let mut writers: HashMap<&str, Vec<usize>> = HashMap::new();
+    // Ordenado: los avisos de varias escrituras salen siempre en el mismo orden.
+    let mut writers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (s, w) in writes.iter().enumerate() {
         for v in w {
             writers.entry(v).or_default().push(s);
@@ -355,11 +375,14 @@ pub fn partition(
     for (v, ws) in &writers {
         if ws.len() > 1 {
             let list: Vec<&str> = ws.iter().map(|&s| names[s].as_str()).collect();
-            diags.push(
-                Level::Warning,
-                STAGE,
-                format!("{v} se escribe en varias secciones: {}", list.join(", ")),
-            );
+            diags
+                .push(
+                    Level::Warning,
+                    STAGE,
+                    Code::MultipleWriters,
+                    format!("{v} se escribe en varias secciones: {}", list.join(", ")),
+                )
+                .at_variable(*v);
         }
     }
     let mut deps: BTreeMap<(usize, usize), Vec<String>> = BTreeMap::new();
@@ -380,19 +403,22 @@ pub fn partition(
             diags.push(
                 Level::Warning,
                 STAGE,
+                Code::CircularDependency,
                 format!(
                     "dependencia circular: {} lee {} de {}, que se ejecuta después (valor del scan anterior)",
                     names[*to],
                     vs.join(", "),
                     names[*from]
                 ),
-            );
+            )
+            .at_section(&names[*to]);
         }
     }
     let ordered: Vec<&str> = order.iter().map(|&s| names[s].as_str()).collect();
     diags.push(
         Level::Info,
         STAGE,
+        Code::SectionOrder,
         format!("orden de secciones: {}", ordered.join(" -> ")),
     );
 

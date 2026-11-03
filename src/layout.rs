@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::model::*;
+use crate::model::{DiagnosticCode as Code, *};
 pub use crate::sugiyama::Pos;
 use crate::sugiyama::{self, MAX_EXTENT};
 
@@ -462,14 +462,17 @@ pub fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mut Diagn
                 w.to.pin = slot;
             }
         }
-        diags.push(
-            Level::Info,
-            STAGE,
-            format!(
-                "{}: entradas conmutativas reordenadas",
-                section.blocks[swap.block].id
-            ),
-        );
+        diags
+            .push(
+                Level::Info,
+                STAGE,
+                Code::InputsReordered,
+                format!(
+                    "{}: entradas conmutativas reordenadas",
+                    section.blocks[swap.block].id
+                ),
+            )
+            .at_block(&section.blocks[swap.block].id);
     }
 }
 

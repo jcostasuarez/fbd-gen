@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::graph::UnionFind;
 use crate::iec::{is_literal, var_root};
 use crate::library::Kind;
-use crate::model::*;
+use crate::model::{DiagnosticCode as Code, *};
 
 const STAGE: Stage = Stage::Types;
 
@@ -167,14 +167,17 @@ fn check_init(decl: &VarSpec, diags: &mut Diagnostics) {
     } else {
         return;
     };
-    diags.push(
-        Level::Error,
-        STAGE,
-        format!(
-            "variable {} ({}): el valor inicial \"{init}\" {problem}",
-            decl.name, decl.ty
-        ),
-    );
+    diags
+        .push(
+            Level::Error,
+            STAGE,
+            Code::InvalidInitialValue,
+            format!(
+                "variable {} ({}): el valor inicial \"{init}\" {problem}",
+                decl.name, decl.ty
+            ),
+        )
+        .at_variable(&decl.name);
 }
 
 /// Tipo concreto que impone un pin, una declaración o un literal tipado, con su origen
@@ -304,18 +307,26 @@ pub fn infer(
             } else {
                 Level::Warning
             };
-            let subject = class_vars
-                .get(class)
+            let vars = class_vars.get(class);
+            let subject = vars
                 .map(|v| format!("{}: ", v.join(", ")))
                 .unwrap_or_default();
-            diags.push(
+            let d = diags.push(
                 level,
                 STAGE,
+                Code::TypeMismatch,
                 format!(
                     "{subject}tipos incompatibles {} ({}) y {} ({})",
                     first.ty, first.origin, other.ty, other.origin
                 ),
             );
+            // Ubicación: la variable de la clase o, si no tiene, el pin que impuso el
+            // tipo en conflicto.
+            if let Some(name) = vars.and_then(|v| v.first()) {
+                d.at_variable(*name);
+            } else if let Some((&r, _)) = pin_node.iter().find(|&(_, &n)| n == other.node) {
+                d.at_pin(section, r);
+            }
         }
     }
     let mut class_weak: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
@@ -347,15 +358,18 @@ pub fn infer(
                 .cloned()
                 .unwrap_or_else(|| class_type(class).into_iter().collect());
             if let Some(ty) = candidates.iter().find(|ty| !accepts_generic(&p.ty, ty)) {
-                diags.push(
-                    Level::Error,
-                    STAGE,
-                    format!(
-                        "{}: el tipo {ty} no pertenece a {}",
-                        section.pin_path(r),
-                        p.ty
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::GenericTypeMismatch,
+                        format!(
+                            "{}: el tipo {ty} no pertenece a {}",
+                            section.pin_path(r),
+                            p.ty
+                        ),
+                    )
+                    .at_pin(section, r);
             }
         }
     }
@@ -386,11 +400,16 @@ pub fn infer(
                 ty,
                 decl: decl.cloned(),
             }),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UndeducibleType,
+                        format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
+                    )
+                    .at_variable(name);
+            }
         }
     }
 
@@ -407,13 +426,18 @@ pub fn infer(
                 ty: d.ty.clone(),
                 decl: Some((*d).clone()),
             }),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!(
-                    "{name}: {root} tiene que estar declarada en \"variables\" o ser una instancia"
-                ),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UndeclaredRoot,
+                        format!(
+                            "{name}: {root} tiene que estar declarada en \"variables\" o ser una instancia"
+                        ),
+                    )
+                    .at_variable(name);
+            }
         }
     }
 
@@ -475,11 +499,16 @@ pub fn section_vars(
                 ty,
                 decl,
             }),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UndeducibleType,
+                        format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
+                    )
+                    .at_variable(name);
+            }
         }
     }
     result

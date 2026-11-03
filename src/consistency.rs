@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
-use crate::model::*;
+use crate::model::{DiagnosticCode as Code, *};
 
 const STAGE: Stage = Stage::Consistency;
 
@@ -304,33 +304,42 @@ fn literal_outliers(section: &Section, members: &[&GroupGraph], diags: &mut Diag
                 .keys()
                 .map(|&gi| members[gi].name.as_str())
                 .collect();
-            diags.push(
-                Level::Info,
-                STAGE,
-                format!(
-                    "{}: el pin {pin} no tiene un valor mayoritario",
-                    names.join(", ")
-                ),
-            );
+            // Abarca a varios equipos: solo el pin, sin el bloque de uno de ellos.
+            diags
+                .push(
+                    Level::Info,
+                    STAGE,
+                    Code::NoMajorityValue,
+                    format!(
+                        "{}: el pin {pin} no tiene un valor mayoritario",
+                        names.join(", ")
+                    ),
+                )
+                .at_pin_name(&pin);
             continue;
         }
         for (gi, vals) in &per_group {
             let v = key(vals);
             if v != majority {
-                diags.push(
-                    Level::Info,
-                    STAGE,
-                    format!(
-                        "{}: {}.{pin} = {} (el resto del típico usa {})",
-                        members[*gi].name,
-                        vals[0].1,
-                        vals.iter()
-                            .map(|x| x.0.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        shown.join(", ")
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Info,
+                        STAGE,
+                        Code::LiteralOutlier,
+                        format!(
+                            "{}: {}.{pin} = {} (el resto del típico usa {})",
+                            members[*gi].name,
+                            vals[0].1,
+                            vals.iter()
+                                .map(|x| x.0.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            shown.join(", ")
+                        ),
+                    )
+                    .at_group(&members[*gi].name)
+                    .at_block(&vals[0].1)
+                    .at_pin_name(&pin);
             }
         }
     }
@@ -360,6 +369,7 @@ pub fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics
         diags.push(
             Level::Info,
             STAGE,
+            Code::SharedTypical,
             format!("típico compartido por {}", names.join(", ")),
         );
         let refs: Vec<&GroupGraph> = members.iter().map(|&i| &graphs[i]).collect();
@@ -377,16 +387,19 @@ pub fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics
             .max_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((sim, members)) = best.filter(|(s, _)| *s >= cfg.similarity) {
             let names: Vec<&str> = members.iter().map(|&m| graphs[m].name.as_str()).collect();
-            diags.push(
-                Level::Warning,
-                STAGE,
-                format!(
-                    "{} se parece al típico de {} (similitud {sim:.2}) pero difiere: {}",
-                    g.name,
-                    names.join(", "),
-                    describe_diff(g, &graphs[members[0]])
-                ),
-            );
+            diags
+                .push(
+                    Level::Warning,
+                    STAGE,
+                    Code::TypicalDeviation,
+                    format!(
+                        "{} se parece al típico de {} (similitud {sim:.2}) pero difiere: {}",
+                        g.name,
+                        names.join(", "),
+                        describe_diff(g, &graphs[members[0]])
+                    ),
+                )
+                .at_group(&g.name);
         } else if let Some((j, sim)) = graphs
             .iter()
             .enumerate()
@@ -395,16 +408,19 @@ pub fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics
             .filter(|(_, s)| *s >= cfg.similarity)
             .max_by(|a, b| a.1.total_cmp(&b.1))
         {
-            diags.push(
-                Level::Info,
-                STAGE,
-                format!(
-                    "{} y {} son casi iguales (similitud {sim:.2}): {}",
-                    g.name,
-                    graphs[j].name,
-                    describe_diff(g, &graphs[j])
-                ),
-            );
+            diags
+                .push(
+                    Level::Info,
+                    STAGE,
+                    Code::NearDuplicate,
+                    format!(
+                        "{} y {} son casi iguales (similitud {sim:.2}): {}",
+                        g.name,
+                        graphs[j].name,
+                        describe_diff(g, &graphs[j])
+                    ),
+                )
+                .at_group(&g.name);
         }
     }
 }

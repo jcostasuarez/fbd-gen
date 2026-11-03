@@ -46,7 +46,7 @@ fn print(scope: &str, diags: &[Diagnostic]) {
             Level::Warning => "aviso",
             Level::Info => "info",
         };
-        eprintln!("[{tag}] {scope}{}: {}", d.stage, d.message);
+        eprintln!("[{tag}] {scope}{}/{}: {}", d.stage, d.code, d.message);
     }
 }
 

@@ -362,24 +362,284 @@ impl std::fmt::Display for Stage {
     }
 }
 
+/// Define [`DiagnosticCode`] con su nombre estable en un solo lugar: el mismo texto sale
+/// en `as_str`, en `Display` y al serializar.
+macro_rules! diagnostic_codes {
+    ($($(#[doc = $doc:literal])* $variant:ident = $name:literal,)*) => {
+        /// Qué detectó un diagnóstico, independiente del texto del mensaje.
+        ///
+        /// El nombre serializado (`unknown_pin`, `type_mismatch`...) es estable: se puede
+        /// usar para filtrar, contar o decidir una corrección automática sin interpretar
+        /// el mensaje, que es para personas y puede cambiar de redacción. Pueden aparecer
+        /// códigos nuevos en versiones futuras.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[non_exhaustive]
+        pub enum DiagnosticCode {
+            $($(#[doc = $doc])* $variant,)*
+        }
+
+        impl DiagnosticCode {
+            /// Todos los códigos, en orden de declaración.
+            pub const ALL: &'static [DiagnosticCode] = &[$(DiagnosticCode::$variant,)*];
+
+            /// Nombre estable en `snake_case`, el mismo que se serializa.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(DiagnosticCode::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+diagnostic_codes! {
+    // --- Validación (Stage::Validate) ---
+    /// El nombre del programa o de la sección no es un identificador IEC.
+    InvalidProgramName = "invalid_program_name",
+    /// El grafo no tiene bloques.
+    EmptyGraph = "empty_graph",
+    /// La tarea no es MAST, FAST, AUX0 a AUX3 ni SAFE.
+    InvalidTask = "invalid_task",
+    /// Una variable declarada tiene un nombre inválido.
+    InvalidVariableName = "invalid_variable_name",
+    /// `address` no es una dirección topológica (`%MW100`).
+    InvalidAddress = "invalid_address",
+    /// Un texto que va al XML tiene un caracter de control que XML 1.0 no admite.
+    InvalidXmlChar = "invalid_xml_char",
+    /// El id de un bloque no es un identificador IEC.
+    InvalidBlockId = "invalid_block_id",
+    /// El nombre de instancia no es un identificador IEC, o está vacío.
+    InvalidInstanceName = "invalid_instance_name",
+    /// Dos bloques con el mismo id (sin distinguir mayúsculas).
+    DuplicateBlockId = "duplicate_block_id",
+    /// El tipo de bloque no está en el catálogo.
+    UnknownBlockType = "unknown_block_type",
+    /// Más entradas extensibles que el máximo del bloque, o fuera de su rango.
+    TooManyInputs = "too_many_inputs",
+    /// Se pidió una cantidad de entradas extensibles a un bloque que no las tiene.
+    NotExtensible = "not_extensible",
+    /// Se dio una instancia a una EF, que no tiene.
+    InstanceNotAllowed = "instance_not_allowed",
+    /// Dos bloques con el mismo nombre de instancia.
+    DuplicateInstance = "duplicate_instance",
+    /// Una variable se llama como una instancia o como un id de bloque.
+    NameCollision = "name_collision",
+    /// Un comentario apunta a un bloque inexistente.
+    UnknownCommentTarget = "unknown_comment_target",
+    /// El bloque no tiene ese pin.
+    UnknownPin = "unknown_pin",
+    /// Un extremo no es un pin, un literal ni una variable válida (o está vacío).
+    InvalidEndpoint = "invalid_endpoint",
+    /// El destino de un valor no es una entrada.
+    NotAnInput = "not_an_input",
+    /// La entrada ya tiene un valor (cable, variable o literal).
+    InputAlreadyDriven = "input_already_driven",
+    /// El origen de un cable no es una salida.
+    NotAnOutput = "not_an_output",
+    /// Una salida o un IN_OUT apunta a un literal en vez de una variable.
+    OutputToLiteral = "output_to_literal",
+    /// La salida ya escribe otra variable.
+    OutputAlreadyAssigned = "output_already_assigned",
+    /// Ningún extremo del link es un pin de bloque.
+    NoBlockEndpoint = "no_block_endpoint",
+    /// El ancho del bloque en el catálogo es una estimación (aviso).
+    EstimatedWidth = "estimated_width",
+    /// Una entrada extensible quedó sin conectar (aviso).
+    UnconnectedExtensibleInput = "unconnected_extensible_input",
+    /// Un IN_OUT quedó sin conectar del lado de entrada (aviso).
+    UnconnectedInOut = "unconnected_in_out",
+
+    // --- Tipos (Stage::Types) ---
+    /// El valor inicial no es un literal o es de otro tipo.
+    InvalidInitialValue = "invalid_initial_value",
+    /// Tipos distintos unidos por un cable o una variable (error entre elementales,
+    /// aviso entre derivados).
+    TypeMismatch = "type_mismatch",
+    /// El tipo no pertenece a la familia genérica del pin (`ANY_INT`...).
+    GenericTypeMismatch = "generic_type_mismatch",
+    /// No se pudo deducir el tipo de una variable: hay que declararla.
+    UndeducibleType = "undeducible_type",
+    /// Un campo o índice cuya raíz no está declarada ni es una instancia.
+    UndeclaredRoot = "undeclared_root",
+
+    // --- Consistencia entre equipos (Stage::Consistency) ---
+    /// Varios equipos comparten un típico (información).
+    SharedTypical = "shared_typical",
+    /// Un equipo usa en un pin un literal distinto al del resto de su típico.
+    LiteralOutlier = "literal_outlier",
+    /// Un pin del típico no tiene un valor mayoritario.
+    NoMajorityValue = "no_majority_value",
+    /// Un equipo se parece a un típico compartido pero difiere (aviso).
+    TypicalDeviation = "typical_deviation",
+    /// Dos equipos únicos son casi iguales.
+    NearDuplicate = "near_duplicate",
+
+    // --- Partición y orden de secciones (Stage::Partition) ---
+    /// Un grupo superó `maxBlocks` y se dividió.
+    SectionSplit = "section_split",
+    /// Un nombre de sección se repetía y se renombró.
+    SectionRenamed = "section_renamed",
+    /// Un bloque está más conectado con otra sección que con la suya (aviso).
+    WeakCohesion = "weak_cohesion",
+    /// Un cable entre secciones se reemplazó por una variable.
+    CrossSectionLink = "cross_section_link",
+    /// Una variable se escribe en varias secciones (aviso).
+    MultipleWriters = "multiple_writers",
+    /// Una sección lee un valor que otra escribe después (aviso).
+    CircularDependency = "circular_dependency",
+    /// Orden de ejecución de las secciones.
+    SectionOrder = "section_order",
+
+    // --- Normalización (Stage::Normalize) ---
+    /// Un lazo se cortó con una variable (lectura del scan anterior).
+    FeedbackCut = "feedback_cut",
+    /// Un fan-out alto se reemplazó por una variable.
+    FanoutToVariable = "fanout_to_variable",
+    /// Un fan-out alto se conservó para respetar el orden de ejecución.
+    FanoutKept = "fanout_kept",
+
+    // --- Layout (Stage::Layout) ---
+    /// Se reordenaron entradas conmutativas para reducir cruces.
+    InputsReordered = "inputs_reordered",
+}
+
+impl std::fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for DiagnosticCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Dónde está lo que señala un diagnóstico, con los nombres e índices de la entrada.
+/// Solo se completan los campos que aplican; al serializar se omiten los vacíos.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct DiagnosticLocation {
+    /// Id del bloque (`BlockSpec::id`), tal como se escribió en la entrada.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block: Option<String>,
+    /// Pin del bloque (`IN1`, `Q`...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin: Option<String>,
+    /// Índice del link en `links`, desde 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<usize>,
+    /// Variable (declarada, usada en un link o creada por el generador).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable: Option<String>,
+    /// Índice del comentario en `comments`, desde 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<usize>,
+    /// Equipo (`BlockSpec::group`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Sección generada.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+}
+
+impl DiagnosticLocation {
+    /// Sin ningún dato de ubicación: el diagnóstico es del programa entero.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Un hallazgo de una etapa del pipeline.
+///
+/// `code` y `location` son para programas (un cliente, el LLM que corrige su grafo);
+/// `message` es para personas y puede cambiar de redacción entre versiones.
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct Diagnostic {
     pub level: Level,
     pub stage: Stage,
+    pub code: DiagnosticCode,
+    #[serde(skip_serializing_if = "DiagnosticLocation::is_empty")]
+    pub location: DiagnosticLocation,
     pub message: String,
+}
+
+impl Diagnostic {
+    pub(crate) fn new(
+        level: Level,
+        stage: Stage,
+        code: DiagnosticCode,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            level,
+            stage,
+            code,
+            location: DiagnosticLocation::default(),
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn at_block(&mut self, id: impl Into<String>) -> &mut Self {
+        self.location.block = Some(id.into());
+        self
+    }
+
+    /// Bloque y pin de una referencia dentro de `section`.
+    pub(crate) fn at_pin(&mut self, section: &Section, r: PinRef) -> &mut Self {
+        let b = &section.blocks[r.block];
+        self.location.block = Some(b.id.clone());
+        self.location.pin = Some(b.pins[r.pin].name.clone());
+        self
+    }
+
+    pub(crate) fn at_pin_name(&mut self, pin: impl Into<String>) -> &mut Self {
+        self.location.pin = Some(pin.into());
+        self
+    }
+
+    pub(crate) fn at_link(&mut self, index: usize) -> &mut Self {
+        self.location.link = Some(index);
+        self
+    }
+
+    pub(crate) fn at_variable(&mut self, name: impl Into<String>) -> &mut Self {
+        self.location.variable = Some(name.into());
+        self
+    }
+
+    pub(crate) fn at_comment(&mut self, index: usize) -> &mut Self {
+        self.location.comment = Some(index);
+        self
+    }
+
+    pub(crate) fn at_group(&mut self, group: impl Into<String>) -> &mut Self {
+        self.location.group = Some(group.into());
+        self
+    }
+
+    pub(crate) fn at_section(&mut self, section: impl Into<String>) -> &mut Self {
+        self.location.section = Some(section.into());
+        self
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct Diagnostics(pub Vec<Diagnostic>);
 
 impl Diagnostics {
-    pub fn push(&mut self, level: Level, stage: Stage, message: impl Into<String>) {
-        self.0.push(Diagnostic {
-            level,
-            stage,
-            message: message.into(),
-        });
+    /// Agrega un diagnóstico y lo devuelve para completar su ubicación con `at_*`.
+    pub fn push(
+        &mut self,
+        level: Level,
+        stage: Stage,
+        code: DiagnosticCode,
+        message: impl Into<String>,
+    ) -> &mut Diagnostic {
+        self.0.push(Diagnostic::new(level, stage, code, message));
+        let last = self.0.len() - 1;
+        &mut self.0[last]
     }
 
     pub fn has_errors(&self) -> bool {

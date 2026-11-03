@@ -63,7 +63,7 @@ Los structs públicos (entradas, configuraciones, resultados, `Diagnostic` y los
 `sugiyama`) son `#[non_exhaustive]`: una versión nueva puede agregarles campos sin romper
 a quien los use. Por eso, desde otro crate no se arman con un literal `Tipo { .. }`, ni
 siquiera con `..Default::default()`: se usan `new`/`Default` y después se asignan los
-campos públicos. Los enums de errores y `Stage` también pueden sumar
+campos públicos. Los enums de errores, `Stage` y `DiagnosticCode` también pueden sumar
 variantes, así que un `match` sobre ellos necesita un brazo `_`. `Level`, `PinDirection`,
 `BlockKind`, `Parameter` y `LinkSpec` son conjuntos cerrados. `LayoutConfig` son medidas enteras en celdas: separación entre
 bloques, entre capas y entre redes, margen de la hoja y escalas de texto.
@@ -78,7 +78,8 @@ ejecución. Cada `GeneratedSection` contiene:
 - `diagnostics`: avisos e información propios de la sección (normalización y layout). Los
   de validación, tipos, consistencia y partición están una sola vez, en el programa.
   Cada `Diagnostic` tiene `level`, `stage` (`Stage::Validate`, `Types`, `Consistency`,
-  `Partition`, `Normalize` o `Layout`, en minúsculas al serializar) y `message`.
+  `Partition`, `Normalize` o `Layout`, en minúsculas al serializar), `code`, `location`
+  y `message` (ver [Diagnósticos](#diagnósticos)).
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
 - `file_name(ext)`: nombre de archivo que usa la CLI (`<sección>.xbd`, `.svg`, `.layout.json`).
@@ -102,6 +103,49 @@ Un resultado `Ok` no contiene secciones inválidas ni salidas opcionales. Los er
 `GenerationError::diagnostics()` da acceso a los diagnósticos de una entrada inválida.
 Los fallos operativos conservan su causa mediante `std::error::Error::source()`.
 Si falla una sección, `generate_program` devuelve `Err`; no publica un programa parcial.
+
+## Diagnósticos
+
+Un diagnóstico sirve a dos lectores. `message` es para personas y puede cambiar de
+redacción. `code` (`DiagnosticCode`) y `location` (`DiagnosticLocation`) son para
+programas, por ejemplo el LLM que corrige su propio grafo: con ellos se puede decidir
+qué arreglar sin interpretar el texto.
+
+- `code` dice qué se detectó: `unknown_pin`, `input_already_driven`, `type_mismatch`,
+  `undeducible_type`, `feedback_cut`... Su nombre serializado (`DiagnosticCode::as_str`)
+  es estable; `DiagnosticCode::ALL` lista todos y la documentación de cada variante dice
+  cuándo aparece. Pueden sumarse códigos en versiones futuras.
+- `location` dice dónde, en términos de la entrada: `block` (el `id` del bloque), `pin`,
+  `link` (índice en `links`, desde 0), `variable`, `comment` (índice en `comments`),
+  `group` (equipo) y `section`. Solo se completan los campos que aplican; al serializar
+  se omiten los vacíos, y `location` entera se omite si no hay ninguno.
+
+```json
+{
+  "level": "error",
+  "stage": "validate",
+  "code": "unknown_pin",
+  "location": { "block": "n", "pin": "FOO", "link": 0 },
+  "message": "n: el bloque NOT no tiene el pin FOO"
+}
+```
+
+```rust,no_run
+use fbd_gen::{DiagnosticCode, Generator, ProgramSpec};
+
+let spec: ProgramSpec = serde_json::from_str(r#"{"name":"P","blocks":[{"id":"n","type":"NOT"}],
+    "links":[["TRUE","n.FOO"]]}"#)?;
+let error = Generator::embedded()?.generate_program(&spec).unwrap_err();
+for d in error.diagnostics() {
+    if d.code == DiagnosticCode::UnknownPin {
+        println!("link {:?}: {:?} no tiene {:?}", d.location.link, d.location.block, d.location.pin);
+    }
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+La CLI los imprime como `[error] validate/unknown_pin: ...`, y `manifest.json` y cada
+`.layout.json` los incluyen completos.
 
 ## DFB y funciones externas
 
