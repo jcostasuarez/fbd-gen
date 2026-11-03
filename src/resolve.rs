@@ -189,11 +189,53 @@ fn check_xml_texts(spec: &ProgramSpec, diags: &mut Diagnostics) {
     }
 }
 
+/// Un link ya parseado: sus dos extremos y el texto original de cada uno.
+type ParsedLink<'a> = (Endpoint, Endpoint, &'a str, &'a str);
+
 pub(crate) fn resolve(
     spec: &ProgramSpec,
     lib: &Library,
     diags: &mut Diagnostics,
 ) -> Option<Section> {
+    check_program(spec, diags);
+    check_xml_texts(spec, diags);
+    let ids = index_blocks(spec, diags);
+    let links: Vec<ParsedLink<'_>> = spec
+        .links
+        .iter()
+        .map(|l| {
+            let (a, b) = l.ends();
+            (parse_endpoint(a, &ids), parse_endpoint(b, &ids), a, b)
+        })
+        .collect();
+    let blocks = build_blocks(
+        spec,
+        lib,
+        &referenced_pins(spec.blocks.len(), &links),
+        diags,
+    );
+    if diags.has_errors() {
+        return None;
+    }
+    check_names(spec, &ids, &blocks, &links, diags);
+    let mut section = Section {
+        name: spec.name.clone(),
+        blocks,
+        wires: Vec::new(),
+        execution_dependencies: Vec::new(),
+        generated_vars: Vec::new(),
+        comments: resolve_comments(spec, &ids, diags),
+    };
+    let mut drivers = HashMap::new();
+    for link in links {
+        connect(&mut section, &mut drivers, link, diags);
+    }
+    warn_unconnected(&section, &drivers, diags);
+    (!diags.has_errors()).then_some(section)
+}
+
+/// Nombre del programa, tarea y declaraciones de variables.
+fn check_program(spec: &ProgramSpec, diags: &mut Diagnostics) {
     // El nombre termina en la sección de Control Expert y en los archivos de salida.
     if !is_identifier(&spec.name) {
         diags.push(
@@ -237,7 +279,10 @@ pub(crate) fn resolve(
             );
         }
     }
-    check_xml_texts(spec, diags);
+}
+
+/// Índice de cada bloque por id (sin distinguir mayúsculas). Valida ids e instancias.
+fn index_blocks(spec: &ProgramSpec, diags: &mut Diagnostics) -> HashMap<String, usize> {
     let mut ids = HashMap::new();
     for (i, b) in spec.blocks.iter().enumerate() {
         // Un punto en el id lo confundiría con `bloque.PIN` en los links.
@@ -263,30 +308,33 @@ pub(crate) fn resolve(
             );
         }
     }
+    ids
+}
 
-    let links: Vec<(Endpoint, Endpoint, &str, &str)> = spec
-        .links
-        .iter()
-        .map(|l| {
-            let (a, b) = l.ends();
-            (parse_endpoint(a, &ids), parse_endpoint(b, &ids), a, b)
-        })
-        .collect();
-
-    // Pines referenciados por bloque, para dimensionar las entradas extensibles.
-    let mut referenced: Vec<Vec<String>> = vec![Vec::new(); spec.blocks.len()];
-    for (a, b, ..) in &links {
+/// Pines referenciados por bloque, para dimensionar las entradas extensibles.
+fn referenced_pins(block_count: usize, links: &[ParsedLink<'_>]) -> Vec<Vec<String>> {
+    let mut referenced = vec![Vec::new(); block_count];
+    for (a, b, ..) in links {
         for e in [a, b] {
             if let Endpoint::Pin { block, pin } = e {
                 referenced[*block].push(pin.clone());
             }
         }
     }
+    referenced
+}
 
+/// Bloques con sus pines según la librería. Un tipo desconocido es un error.
+fn build_blocks(
+    spec: &ProgramSpec,
+    lib: &Library,
+    referenced: &[Vec<String>],
+    diags: &mut Diagnostics,
+) -> Vec<Block> {
     let mut blocks = Vec::new();
-    for (i, b) in spec.blocks.iter().enumerate() {
+    for (b, referenced) in spec.blocks.iter().zip(referenced) {
         match lib.get(&b.ty) {
-            Some(def) => blocks.push(build_block(b, def, &referenced[i], diags)),
+            Some(def) => blocks.push(build_block(b, def, referenced, diags)),
             None => diags.push(
                 Level::Error,
                 STAGE,
@@ -294,12 +342,23 @@ pub(crate) fn resolve(
             ),
         }
     }
-    if diags.has_errors() {
-        return None;
-    }
+    blocks
+}
 
+/// Instancias únicas y nombres de variables sin ambigüedad.
+///
+/// Una variable simple no puede llamarse como una instancia (Control Expert declararía
+/// las dos) y una declarada no puede llamarse como un id de bloque (`Motor.Run` sería
+/// ambiguo entre un pin y un campo). Un acceso a una instancia (`T1.ET`) sí es válido.
+fn check_names(
+    spec: &ProgramSpec,
+    ids: &HashMap<String, usize>,
+    blocks: &[Block],
+    links: &[ParsedLink<'_>],
+    diags: &mut Diagnostics,
+) {
     let mut instances = HashMap::new();
-    for b in &blocks {
+    for b in blocks {
         if let Some(inst) = &b.instance
             && let Some(other) = instances.insert(inst.to_ascii_uppercase(), &b.id)
         {
@@ -311,10 +370,6 @@ pub(crate) fn resolve(
         }
     }
 
-    // Nombres de variables: una variable simple no puede llamarse como una instancia
-    // (Control Expert declararía las dos) y una declarada no puede llamarse como un id
-    // de bloque (`Motor.Run` sería ambiguo entre un pin y un campo). Un acceso a una
-    // instancia (`T1.ET`) sí es válido.
     let mut reported = HashSet::new();
     let declared = spec.variables.iter().map(|v| (v.name.as_str(), true));
     let used = links
@@ -341,7 +396,14 @@ pub(crate) fn resolve(
             diags.push(Level::Error, STAGE, message);
         }
     }
+}
 
+/// Comentarios de red anclados a su bloque.
+fn resolve_comments(
+    spec: &ProgramSpec,
+    ids: &HashMap<String, usize>,
+    diags: &mut Diagnostics,
+) -> Vec<(usize, String)> {
     let mut comments = Vec::new();
     for c in &spec.comments {
         match ids.get(&c.at.to_ascii_uppercase()) {
@@ -353,142 +415,144 @@ pub(crate) fn resolve(
             ),
         }
     }
-    let mut section = Section {
-        name: spec.name.clone(),
-        blocks,
-        wires: Vec::new(),
-        execution_dependencies: Vec::new(),
-        generated_vars: Vec::new(),
-        comments,
-    };
-    let mut drivers: HashMap<PinRef, String> = HashMap::new();
+    comments
+}
 
-    for (a, b, sa, sb) in links {
-        let lookup = |section: &Section, e: &Endpoint| -> Result<Option<PinRef>, String> {
-            match e {
-                Endpoint::Pin { block, pin } => section.blocks[*block]
-                    .pin_index(pin)
-                    .map(|p| {
-                        Some(PinRef {
-                            block: *block,
-                            pin: p,
-                        })
-                    })
-                    .ok_or_else(|| {
-                        format!(
-                            "{}: el bloque {} no tiene el pin {}",
-                            section.blocks[*block].id, section.blocks[*block].ty, pin
-                        )
-                    }),
-                _ => Ok(None),
-            }
-        };
-        let (ra, rb) = match (lookup(&section, &a), lookup(&section, &b)) {
-            (Ok(ra), Ok(rb)) => (ra, rb),
-            (Err(e), _) | (_, Err(e)) => {
-                diags.push(Level::Error, STAGE, e);
-                continue;
-            }
-        };
-        let link = format!("[{sa} -> {sb}]");
-        if let Some(name) = [&a, &b].into_iter().find_map(|e| match e {
-            Endpoint::Var(v) if !is_variable_ref(v) => Some(v),
-            _ => None,
-        }) {
+/// Extremo de un link ya buscado en la sección.
+enum End {
+    /// Un pin de bloque.
+    Pin(PinRef),
+    /// Una variable o un literal, escrito junto al pin del otro extremo.
+    Value(Param),
+}
+
+/// Busca el pin de un extremo `bloque.PIN`; los demás extremos son valores.
+fn lookup(section: &Section, endpoint: Endpoint) -> Result<End, String> {
+    match endpoint {
+        Endpoint::Pin { block, pin } => section.blocks[block]
+            .pin_index(&pin)
+            .map(|p| End::Pin(PinRef { block, pin: p }))
+            .ok_or_else(|| {
+                format!(
+                    "{}: el bloque {} no tiene el pin {}",
+                    section.blocks[block].id, section.blocks[block].ty, pin
+                )
+            }),
+        Endpoint::Var(name) => Ok(End::Value(Param::Var(name))),
+        Endpoint::Lit(text) => Ok(End::Value(Param::Lit(text))),
+    }
+}
+
+/// Aplica un link a la sección: un cable entre dos pines, o un parámetro junto a un pin.
+/// `drivers` recuerda qué link conecta cada entrada, para rechazar una segunda.
+fn connect(
+    section: &mut Section,
+    drivers: &mut HashMap<PinRef, String>,
+    (a, b, sa, sb): ParsedLink<'_>,
+    diags: &mut Diagnostics,
+) {
+    let link = format!("[{sa} -> {sb}]");
+    let (from, to) = match (lookup(section, a), lookup(section, b)) {
+        (Ok(from), Ok(to)) => (from, to),
+        (Err(e), _) | (_, Err(e)) => {
+            diags.push(Level::Error, STAGE, e);
+            return;
+        }
+    };
+    let invalid_var = [&from, &to].into_iter().find_map(|e| match e {
+        End::Value(Param::Var(v)) if !is_variable_ref(v) => Some(v),
+        _ => None,
+    });
+    if let Some(name) = invalid_var {
+        diags.push(
+            Level::Error,
+            STAGE,
+            format!("{link}: \"{name}\" no es un pin, un literal ni una variable válida"),
+        );
+        return;
+    }
+    let is_output = |section: &Section, r: PinRef, diags: &mut Diagnostics| {
+        let ok = section.pin(r).dir.has_right();
+        if !ok {
             diags.push(
                 Level::Error,
                 STAGE,
-                format!("{link}: \"{name}\" no es un pin, un literal ni una variable válida"),
+                format!("{link}: {} no es una salida", section.pin_path(r)),
             );
-            continue;
         }
-
-        // Destino de un valor: entrada (cable o parámetro).
-        let mut claim_input = |section: &Section, r: PinRef, diags: &mut Diagnostics| -> bool {
-            if !section.pin(r).dir.has_left() {
-                diags.push(
-                    Level::Error,
-                    STAGE,
-                    format!("{link}: {} no es una entrada", section.pin_path(r)),
-                );
-                return false;
-            }
-            if let Some(prev) = drivers.insert(r, link.clone()) {
-                diags.push(
-                    Level::Error,
-                    STAGE,
-                    format!(
-                        "{link}: {} ya está conectada por {prev}",
-                        section.pin_path(r)
-                    ),
-                );
-                return false;
-            }
-            true
-        };
-
-        match (ra, rb) {
-            (Some(from), Some(to)) => {
-                if !section.pin(from).dir.has_right() {
-                    diags.push(
-                        Level::Error,
-                        STAGE,
-                        format!("{link}: {} no es una salida", section.pin_path(from)),
-                    );
-                    continue;
-                }
-                if !claim_input(&section, to, diags) {
-                    continue;
-                }
+        ok
+    };
+    match (from, to) {
+        (End::Pin(from), End::Pin(to)) => {
+            if is_output(section, from, diags) && claim_input(section, drivers, to, &link, diags) {
                 // La compatibilidad de tipos la valida la inferencia (types.rs).
                 section.wires.push(Wire { from, to });
             }
-            (None, Some(to)) => {
-                if !claim_input(&section, to, diags) {
-                    continue;
-                }
-                let param = match a {
-                    Endpoint::Lit(s) => Param::Lit(s),
-                    Endpoint::Var(s) => Param::Var(s),
-                    Endpoint::Pin { .. } => unreachable!(),
-                };
+        }
+        (End::Value(param), End::Pin(to)) => {
+            if claim_input(section, drivers, to, &link, diags) {
                 section.pin_mut(to).param_in = Some(param);
             }
-            (Some(from), None) => {
-                let Endpoint::Var(name) = b else {
-                    diags.push(
-                        Level::Error,
-                        STAGE,
-                        format!("{link}: una salida no puede escribir un literal"),
-                    );
-                    continue;
-                };
-                if !section.pin(from).dir.has_right() {
-                    diags.push(
-                        Level::Error,
-                        STAGE,
-                        format!("{link}: {} no es una salida", section.pin_path(from)),
-                    );
-                    continue;
-                }
-                if let Some(prev) = &section.pin(from).param_out {
-                    diags.push(
-                        Level::Error,
-                        STAGE,
-                        format!("{link}: la salida ya escribe {}", prev.text()),
-                    );
-                    continue;
-                }
-                section.pin_mut(from).param_out = Some(Param::Var(name));
-            }
-            (None, None) => diags.push(
-                Level::Error,
-                STAGE,
-                format!("{link}: ningún extremo es un pin de bloque"),
-            ),
         }
+        (End::Pin(from), End::Value(Param::Var(name))) => {
+            if !is_output(section, from, diags) {
+                return;
+            }
+            if let Some(prev) = &section.pin(from).param_out {
+                diags.push(
+                    Level::Error,
+                    STAGE,
+                    format!("{link}: la salida ya escribe {}", prev.text()),
+                );
+                return;
+            }
+            section.pin_mut(from).param_out = Some(Param::Var(name));
+        }
+        (End::Pin(_), End::Value(Param::Lit(_))) => diags.push(
+            Level::Error,
+            STAGE,
+            format!("{link}: una salida no puede escribir un literal"),
+        ),
+        (End::Value(_), End::Value(_)) => diags.push(
+            Level::Error,
+            STAGE,
+            format!("{link}: ningún extremo es un pin de bloque"),
+        ),
     }
+}
 
+/// Reserva la entrada `r` para `link`: tiene que ser una entrada y no estar conectada.
+fn claim_input(
+    section: &Section,
+    drivers: &mut HashMap<PinRef, String>,
+    r: PinRef,
+    link: &str,
+    diags: &mut Diagnostics,
+) -> bool {
+    if !section.pin(r).dir.has_left() {
+        diags.push(
+            Level::Error,
+            STAGE,
+            format!("{link}: {} no es una entrada", section.pin_path(r)),
+        );
+        return false;
+    }
+    if let Some(prev) = drivers.insert(r, link.to_string()) {
+        diags.push(
+            Level::Error,
+            STAGE,
+            format!(
+                "{link}: {} ya está conectada por {prev}",
+                section.pin_path(r)
+            ),
+        );
+        return false;
+    }
+    true
+}
+
+/// Avisos para entradas extensibles e IN_OUT que ningún link alimenta.
+fn warn_unconnected(section: &Section, drivers: &HashMap<PinRef, String>, diags: &mut Diagnostics) {
     for (bi, b) in section.blocks.iter().enumerate() {
         for (pi, p) in b.pins.iter().enumerate() {
             let connected = drivers.contains_key(&PinRef { block: bi, pin: pi });
@@ -511,6 +575,4 @@ pub(crate) fn resolve(
             }
         }
     }
-
-    (!diags.has_errors()).then_some(section)
 }

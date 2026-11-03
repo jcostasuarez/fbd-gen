@@ -75,6 +75,5 @@ cast_sign_loss = "warn"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 single_match_else = "allow"   # un `match` de dos brazos se lee mejor que `if let ... else`
-too_many_lines = "allow"      # las etapas del pipeline son largas por naturaleza
 similar_names = "allow"       # `x0`/`x1`, `ins`/`outs`: nombres de geometría
 many_single_char_names = "allow"

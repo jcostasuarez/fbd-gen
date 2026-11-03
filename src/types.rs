@@ -201,151 +201,224 @@ pub(crate) fn infer(
     declared: &[VarSpec],
     diags: &mut Diagnostics,
 ) -> Vec<TypedVar> {
-    // Nodos: un nodo por pin, después uno por variable.
-    let mut pin_node: HashMap<PinRef, usize> = HashMap::new();
-    for (bi, b) in section.blocks.iter().enumerate() {
-        for pi in 0..b.pins.len() {
-            let n = pin_node.len();
-            pin_node.insert(PinRef { block: bi, pin: pi }, n);
+    for d in declared {
+        check_init(d, diags);
+    }
+    let decl_by_name: HashMap<String, &VarSpec> = declared
+        .iter()
+        .map(|d| (d.name.to_ascii_uppercase(), d))
+        .collect();
+    let graph = TypeGraph::new(section, declared);
+    let classes = Classes::new(graph);
+    classes.report_conflicts(diags);
+    for (&r, &n) in &classes.pin_node {
+        section.pin_mut(r).inferred = classes.type_of(classes.class_of[n]);
+    }
+    check_generic_pins(section, &classes, diags);
+    let result = typed_vars(section, &classes, &decl_by_name, diags);
+    for g in &mut section.generated_vars {
+        if let Some(v) = result.iter().find(|v| v.name.eq_ignore_ascii_case(&g.name)) {
+            g.ty = v.ty.clone();
         }
     }
-    let mut var_names: Vec<String> = Vec::new();
-    let mut var_node: HashMap<String, usize> = HashMap::new();
-    let mut var_of = |name: &str, var_names: &mut Vec<String>| -> usize {
-        let key = name.to_ascii_uppercase();
-        *var_node.entry(key).or_insert_with(|| {
-            var_names.push(name.to_string());
-            pin_node.len() + var_names.len() - 1
-        })
-    };
+    result
+}
 
-    let mut links: Vec<(usize, usize)> = Vec::new();
-    let mut strong: Vec<Strong> = Vec::new();
-    let mut weak: Vec<(usize, &'static str)> = Vec::new();
+/// Grafo de tipos: un nodo por pin y uno por variable, unidos por cables, parámetros y
+/// pines genéricos de una misma EF. Cada clase de nodos unidos tiene un único tipo.
+struct TypeGraph {
+    /// Nodo de cada pin; los primeros `pin_node.len()` nodos son pines.
+    pin_node: HashMap<PinRef, usize>,
+    /// Variables en orden de primera aparición; la `i` es el nodo `pin_node.len() + i`.
+    var_names: Vec<String>,
+    /// Pares de nodos con el mismo tipo.
+    links: Vec<(usize, usize)>,
+    /// Tipos concretos impuestos por pines, declaraciones y literales tipados.
+    strong: Vec<Strong>,
+    /// Tipos sugeridos por literales sin prefijo (`5`, `1.5`).
+    weak: Vec<(usize, &'static str)>,
+}
 
-    for (bi, b) in section.blocks.iter().enumerate() {
-        let mut generic_groups: HashMap<String, usize> = HashMap::new();
-        for (pi, p) in b.pins.iter().enumerate() {
-            let r = PinRef { block: bi, pin: pi };
-            let n = pin_node[&r];
-            if is_generic(&p.ty) {
-                if b.kind == Kind::Ef {
-                    let first = *generic_groups.entry(p.ty.to_ascii_uppercase()).or_insert(n);
-                    links.push((first, n));
-                }
-            } else {
-                strong.push(Strong {
-                    node: n,
-                    ty: p.ty.clone(),
-                    origin: section.pin_path(r),
-                });
+impl TypeGraph {
+    fn new(section: &Section, declared: &[VarSpec]) -> Self {
+        let mut pin_node: HashMap<PinRef, usize> = HashMap::new();
+        for (bi, b) in section.blocks.iter().enumerate() {
+            for pi in 0..b.pins.len() {
+                let n = pin_node.len();
+                pin_node.insert(PinRef { block: bi, pin: pi }, n);
             }
-            for param in [&p.param_in, &p.param_out].into_iter().flatten() {
-                match param {
-                    Param::Var(v) => links.push((n, var_of(v, &mut var_names))),
-                    Param::Lit(l) => {
-                        if let Some(ty) = typed_literal_type(l) {
-                            strong.push(Strong {
-                                node: n,
-                                ty: ty.to_string(),
-                                origin: format!("{l} en {}", section.pin_path(r)),
-                            });
-                        } else {
-                            weak.extend(literal_hint(l).map(|h| (n, h)));
+        }
+        let mut var_names: Vec<String> = Vec::new();
+        let mut var_node: HashMap<String, usize> = HashMap::new();
+        let mut var_of = |name: &str, var_names: &mut Vec<String>| -> usize {
+            let key = name.to_ascii_uppercase();
+            *var_node.entry(key).or_insert_with(|| {
+                var_names.push(name.to_string());
+                pin_node.len() + var_names.len() - 1
+            })
+        };
+
+        let mut links: Vec<(usize, usize)> = Vec::new();
+        let mut strong: Vec<Strong> = Vec::new();
+        let mut weak: Vec<(usize, &'static str)> = Vec::new();
+        for (bi, b) in section.blocks.iter().enumerate() {
+            let mut generic_groups: HashMap<String, usize> = HashMap::new();
+            for (pi, p) in b.pins.iter().enumerate() {
+                let r = PinRef { block: bi, pin: pi };
+                let n = pin_node[&r];
+                if is_generic(&p.ty) {
+                    if b.kind == Kind::Ef {
+                        let first = *generic_groups.entry(p.ty.to_ascii_uppercase()).or_insert(n);
+                        links.push((first, n));
+                    }
+                } else {
+                    strong.push(Strong {
+                        node: n,
+                        ty: p.ty.clone(),
+                        origin: section.pin_path(r),
+                    });
+                }
+                for param in [&p.param_in, &p.param_out].into_iter().flatten() {
+                    match param {
+                        Param::Var(v) => links.push((n, var_of(v, &mut var_names))),
+                        Param::Lit(l) => {
+                            if let Some(ty) = typed_literal_type(l) {
+                                strong.push(Strong {
+                                    node: n,
+                                    ty: ty.to_string(),
+                                    origin: format!("{l} en {}", section.pin_path(r)),
+                                });
+                            } else {
+                                weak.extend(literal_hint(l).map(|h| (n, h)));
+                            }
                         }
                     }
                 }
             }
         }
+        links.extend(
+            section
+                .wires
+                .iter()
+                .map(|w| (pin_node[&w.from], pin_node[&w.to])),
+        );
+        for d in declared {
+            if let Some(&n) = var_node.get(&d.name.to_ascii_uppercase()) {
+                strong.push(Strong {
+                    node: n,
+                    ty: d.ty.clone(),
+                    origin: format!("declaración de {}", d.name),
+                });
+            }
+        }
+        Self {
+            pin_node,
+            var_names,
+            links,
+            strong,
+            weak,
+        }
     }
-    for w in &section.wires {
-        links.push((pin_node[&w.from], pin_node[&w.to]));
-    }
-    for d in declared {
-        check_init(d, diags);
-    }
-    let mut decl_by_name: HashMap<String, &VarSpec> = HashMap::new();
-    for d in declared {
-        decl_by_name.insert(d.name.to_ascii_uppercase(), d);
-        if let Some(&n) = var_node.get(&d.name.to_ascii_uppercase()) {
-            strong.push(Strong {
-                node: n,
-                ty: d.ty.clone(),
-                origin: format!("declaración de {}", d.name),
-            });
+}
+
+/// Clases del grafo de tipos con sus tipos fuertes, sugeridos y variables.
+struct Classes {
+    pin_node: HashMap<PinRef, usize>,
+    var_names: Vec<String>,
+    /// Clase (representante) de cada nodo.
+    class_of: Vec<usize>,
+    /// Tipos fuertes por clase, con su origen, en el orden en que se encontraron.
+    strong: BTreeMap<usize, Vec<Strong>>,
+    weak: BTreeMap<usize, Vec<&'static str>>,
+}
+
+impl Classes {
+    fn new(graph: TypeGraph) -> Self {
+        let nodes = graph.pin_node.len() + graph.var_names.len();
+        let mut uf = UnionFind::new(nodes);
+        for (a, b) in graph.links {
+            uf.union(a, b);
+        }
+        let class_of: Vec<usize> = (0..nodes).map(|n| uf.find(n)).collect();
+        let mut strong: BTreeMap<usize, Vec<Strong>> = BTreeMap::new();
+        for s in graph.strong {
+            strong.entry(class_of[s.node]).or_default().push(s);
+        }
+        let mut weak: BTreeMap<usize, Vec<&'static str>> = BTreeMap::new();
+        for (n, t) in graph.weak {
+            weak.entry(class_of[n]).or_default().push(t);
+        }
+        Self {
+            pin_node: graph.pin_node,
+            var_names: graph.var_names,
+            class_of,
+            strong,
+            weak,
         }
     }
 
-    let mut uf = UnionFind::new(pin_node.len() + var_names.len());
-    for (a, b) in links {
-        uf.union(a, b);
-    }
-    let mut class_strong: BTreeMap<usize, Vec<String>> = BTreeMap::new();
-    let mut class_origin: BTreeMap<usize, Vec<Strong>> = BTreeMap::new();
-    for s in strong {
-        let class = uf.find(s.node);
-        class_strong.entry(class).or_default().push(s.ty.clone());
-        class_origin.entry(class).or_default().push(s);
-    }
-    let mut class_vars: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
-    for (i, name) in var_names.iter().enumerate() {
-        class_vars
-            .entry(uf.find(pin_node.len() + i))
-            .or_default()
-            .push(name);
-    }
-    // Una clase (cables, variables y pines genéricos unidos) tiene que tener un solo
-    // tipo concreto. Entre elementales es un error seguro de compilación.
-    for (class, strongs) in &class_origin {
-        let first = &strongs[0];
-        if let Some(other) = strongs.iter().find(|s| !compatible(&s.ty, &first.ty)) {
-            let level = if is_elementary(&first.ty) && is_elementary(&other.ty) {
-                Level::Error
-            } else {
-                Level::Warning
-            };
-            let subject = class_vars
-                .get(class)
-                .map(|v| format!("{}: ", v.join(", ")))
-                .unwrap_or_default();
-            diags.push(
-                level,
-                STAGE,
-                format!(
-                    "{subject}tipos incompatibles {} ({}) y {} ({})",
-                    first.ty, first.origin, other.ty, other.origin
-                ),
-            );
-        }
-    }
-    let mut class_weak: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
-    for (n, t) in weak {
-        class_weak.entry(uf.find(n)).or_default().push(t);
+    /// Clase de la variable `i` (en orden de aparición).
+    fn var_class(&self, i: usize) -> usize {
+        self.class_of[self.pin_node.len() + i]
     }
 
-    let class_type = |class: usize| -> Option<String> {
-        class_strong
+    /// Tipo de la clase: el primer tipo fuerte o, si no hay, el sugerido por los
+    /// literales (`REAL` gana sobre los enteros).
+    fn type_of(&self, class: usize) -> Option<String> {
+        self.strong
             .get(&class)
-            .and_then(|s| s.first().cloned())
+            .and_then(|s| s.first())
+            .map(|s| s.ty.clone())
             .or_else(|| {
-                let w = class_weak.get(&class)?;
+                let w = self.weak.get(&class)?;
                 Some(if w.contains(&"REAL") { "REAL" } else { w[0] }.to_string())
             })
-    };
-    for (&r, &n) in &pin_node {
-        section.pin_mut(r).inferred = class_type(uf.find(n));
     }
 
-    // Validar también clases sin variables (por ejemplo, un literal en un pin).
-    // Se comprueban todos los tipos fuertes: uno válido no debe ocultar otro inválido.
+    /// Una clase (cables, variables y pines genéricos unidos) tiene que tener un solo
+    /// tipo concreto. Entre elementales es un error seguro de compilación.
+    fn report_conflicts(&self, diags: &mut Diagnostics) {
+        let mut class_vars: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+        for (i, name) in self.var_names.iter().enumerate() {
+            class_vars.entry(self.var_class(i)).or_default().push(name);
+        }
+        for (class, strongs) in &self.strong {
+            let first = &strongs[0];
+            if let Some(other) = strongs.iter().find(|s| !compatible(&s.ty, &first.ty)) {
+                let level = if is_elementary(&first.ty) && is_elementary(&other.ty) {
+                    Level::Error
+                } else {
+                    Level::Warning
+                };
+                let subject = class_vars
+                    .get(class)
+                    .map(|v| format!("{}: ", v.join(", ")))
+                    .unwrap_or_default();
+                diags.push(
+                    level,
+                    STAGE,
+                    format!(
+                        "{subject}tipos incompatibles {} ({}) y {} ({})",
+                        first.ty, first.origin, other.ty, other.origin
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Cada pin genérico acepta solo tipos de su familia (`ANY_NUM`, `ANY_BIT`...). Valida
+/// también clases sin variables (por ejemplo, un literal en un pin) y todos los tipos
+/// fuertes: uno válido no debe ocultar otro inválido.
+fn check_generic_pins(section: &Section, classes: &Classes, diags: &mut Diagnostics) {
     for (bi, b) in section.blocks.iter().enumerate() {
         for (pi, p) in b.pins.iter().enumerate().filter(|(_, p)| is_generic(&p.ty)) {
             let r = PinRef { block: bi, pin: pi };
-            let class = uf.find(pin_node[&r]);
-            let candidates = class_strong
-                .get(&class)
-                .cloned()
-                .unwrap_or_else(|| class_type(class).into_iter().collect());
+            let class = classes.class_of[classes.pin_node[&r]];
+            let candidates: Vec<String> = match classes.strong.get(&class) {
+                Some(strongs) => strongs.iter().map(|s| s.ty.clone()).collect(),
+                None => classes.type_of(class).into_iter().collect(),
+            };
             if let Some(ty) = candidates.iter().find(|ty| !accepts_generic(&p.ty, ty)) {
                 diags.push(
                     Level::Error,
@@ -359,16 +432,19 @@ pub(crate) fn infer(
             }
         }
     }
+}
 
-    let instances: HashSet<String> = section
-        .blocks
-        .iter()
-        .filter_map(|b| b.instance.as_ref().map(|i| i.to_ascii_uppercase()))
-        .collect();
+/// Variables a declarar, con su tipo: el declarado o el de su clase. Una dirección
+/// topológica no se declara, y un acceso (`Motor.Run`) declara su raíz.
+fn typed_vars(
+    section: &Section,
+    classes: &Classes,
+    decl_by_name: &HashMap<String, &VarSpec>,
+    diags: &mut Diagnostics,
+) -> Vec<TypedVar> {
     let mut result = Vec::new();
     let mut accessed: Vec<(&str, &str)> = Vec::new();
-    for (i, name) in var_names.iter().enumerate() {
-        // Una dirección topológica no se declara; un acceso (`Motor.Run`) declara su raíz.
+    for (i, name) in classes.var_names.iter().enumerate() {
         match var_root(name) {
             None => continue,
             Some(root) if root.len() != name.len() => {
@@ -377,9 +453,10 @@ pub(crate) fn infer(
             }
             Some(_) => {}
         }
-        let class = uf.find(pin_node.len() + i);
         let decl = decl_by_name.get(&name.to_ascii_uppercase()).copied();
-        let ty = decl.map(|d| d.ty.clone()).or_else(|| class_type(class));
+        let ty = decl
+            .map(|d| d.ty.clone())
+            .or_else(|| classes.type_of(classes.var_class(i)));
         match ty {
             Some(ty) => result.push(TypedVar {
                 name: name.clone(),
@@ -396,6 +473,11 @@ pub(crate) fn infer(
 
     // La raíz de un acceso es una variable declarada (su tipo, estructura o array, no se
     // puede deducir de un campo) o una instancia de bloque, que ya se declara sola.
+    let instances: HashSet<String> = section
+        .blocks
+        .iter()
+        .filter_map(|b| b.instance.as_ref().map(|i| i.to_ascii_uppercase()))
+        .collect();
     for (name, root) in accessed {
         let key = root.to_ascii_uppercase();
         if instances.contains(&key) || result.iter().any(|v| v.name.eq_ignore_ascii_case(root)) {
@@ -414,12 +496,6 @@ pub(crate) fn infer(
                     "{name}: {root} tiene que estar declarada en \"variables\" o ser una instancia"
                 ),
             ),
-        }
-    }
-
-    for g in &mut section.generated_vars {
-        if let Some(v) = result.iter().find(|v| v.name.eq_ignore_ascii_case(&g.name)) {
-            g.ty = v.ty.clone();
         }
     }
     result
