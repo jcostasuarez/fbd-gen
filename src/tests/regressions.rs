@@ -488,3 +488,95 @@ fn fanout_variable_without_a_deducible_type_is_an_error() {
         error.diagnostics()
     );
 }
+
+#[test]
+fn accesses_declare_their_root_and_addresses_are_not_declared() {
+    let s = spec(
+        r#"{"name":"F","variables":[{"name":"Motor","type":"MOTOR_DDT"},
+            {"name":"Tab","type":"ARRAY[1..8] OF BOOL"}],
+        "blocks":[{"id":"t","type":"TON","instance":"T1"},{"id":"t2","type":"TON","instance":"T2"}],
+        "links":[["Motor.Run","t.IN"],["T#5s","t.PT"],["t.Q","Tab[3]"],
+            ["%M1","t2.IN"],["T1.ET","t2.PT"],["t2.Q","Tab[4]"]]}"#,
+    );
+    let result = generator().generate_program(&s).unwrap();
+    let section = &result.sections[0];
+    let names: Vec<&str> = section.variables.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(names, ["Motor", "Tab", "T1", "T2"]);
+    assert!(
+        section
+            .xml
+            .contains(r#"<variables name="Motor" typeName="MOTOR_DDT">"#)
+    );
+    for not_declared in ["Motor.Run", "Tab[3]", "T1.ET", "%M1"] {
+        assert!(
+            !section
+                .xml
+                .contains(&format!(r#"<variables name="{not_declared}""#)),
+            "{not_declared}"
+        );
+        assert!(
+            section
+                .xml
+                .contains(&format!(r#"effectiveParameter="{not_declared}""#))
+        );
+    }
+}
+
+#[test]
+fn access_to_an_undeclared_root_is_an_error() {
+    let s = spec(
+        r#"{"name":"F","blocks":[{"id":"t","type":"TON"}],
+        "links":[["Motor.Run","t.IN"],["T#5s","t.PT"]]}"#,
+    );
+    let error = generator().generate_program(&s).unwrap_err();
+    assert!(error.diagnostics().iter().any(|d| d.level == Level::Error
+        && d.message
+            == r#"Motor.Run: Motor tiene que estar declarada en "variables" o ser una instancia"#));
+}
+
+#[test]
+fn block_ids_are_case_insensitive_and_names_cannot_collide() {
+    let errors = |json: &str| -> Vec<String> {
+        let error = generator().generate_program(&spec(json)).unwrap_err();
+        error
+            .diagnostics()
+            .iter()
+            .filter(|d| d.level == Level::Error)
+            .map(|d| d.message.clone())
+            .collect()
+    };
+    assert_eq!(
+        errors(r#"{"name":"C","blocks":[{"id":"a","type":"NOT"},{"id":"A","type":"NOT"}]}"#),
+        ["id de bloque duplicado: A"]
+    );
+    assert_eq!(
+        errors(
+            r#"{"name":"C","variables":[{"name":"T1","type":"BOOL"}],
+            "blocks":[{"id":"t","type":"TON","instance":"T1"}],"links":[["T1","t.IN"],["T#1s","t.PT"]]}"#
+        ),
+        ["variable T1: ya es el nombre de la instancia de t"]
+    );
+    assert_eq!(
+        errors(
+            r#"{"name":"C","variables":[{"name":"Motor","type":"MOTOR_DDT"}],
+            "blocks":[{"id":"motor","type":"NOT"}],"links":[["A","motor.IN"]]}"#
+        ),
+        ["variable Motor: hay un bloque con id motor; `motor.X` sería ambiguo"]
+    );
+
+    // `INV.IN` y `inv.OUT` son pines del bloque `Inv`, también en los comentarios.
+    let result = generator()
+        .generate_program(&spec(
+            r#"{"name":"C","variables":[{"name":"X","type":"BOOL"}],
+            "blocks":[{"id":"Inv","type":"NOT"}],"links":[["X","INV.IN"],["inv.OUT","Y"]],
+            "comments":[{"at":"INV","text":"hola"}]}"#,
+        ))
+        .unwrap();
+    assert_eq!(result.sections[0].layout.text_boxes.len(), 1);
+    let names: Vec<&str> = result.sections[0]
+        .variables
+        .iter()
+        .map(|v| v.name.as_str())
+        .collect();
+    assert_eq!(names, ["X", "Y"]);
+}

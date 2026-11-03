@@ -354,8 +354,23 @@ pub fn infer(
         }
     }
 
+    let instances: HashSet<String> = section
+        .blocks
+        .iter()
+        .filter_map(|b| b.instance.as_ref().map(|i| i.to_ascii_uppercase()))
+        .collect();
     let mut result = Vec::new();
+    let mut accessed: Vec<(&str, &str)> = Vec::new();
     for (i, name) in var_names.iter().enumerate() {
+        // Una dirección topológica no se declara; un acceso (`Motor.Run`) declara su raíz.
+        match var_root(name) {
+            None => continue,
+            Some(root) if root.len() != name.len() => {
+                accessed.push((name, root));
+                continue;
+            }
+            Some(_) => {}
+        }
         let class = uf.find(pin_node.len() + i);
         let decl = decl_by_name.get(&name.to_ascii_uppercase()).copied();
         let ty = decl.map(|d| d.ty.clone()).or_else(|| class_type(class));
@@ -369,6 +384,29 @@ pub fn infer(
                 Level::Error,
                 STAGE,
                 format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
+            ),
+        }
+    }
+
+    // La raíz de un acceso es una variable declarada (su tipo, estructura o array, no se
+    // puede deducir de un campo) o una instancia de bloque, que ya se declara sola.
+    for (name, root) in accessed {
+        let key = root.to_ascii_uppercase();
+        if instances.contains(&key) || result.iter().any(|v| v.name.eq_ignore_ascii_case(root)) {
+            continue;
+        }
+        match decl_by_name.get(&key) {
+            Some(d) => result.push(TypedVar {
+                name: d.name.clone(),
+                ty: d.ty.clone(),
+                decl: Some((*d).clone()),
+            }),
+            None => diags.push(
+                Level::Error,
+                STAGE,
+                format!(
+                    "{name}: {root} tiene que estar declarada en \"variables\" o ser una instancia"
+                ),
             ),
         }
     }
@@ -400,6 +438,17 @@ pub fn section_vars(
         .flatten();
     for param in params {
         let Param::Var(name) = param else { continue };
+        // Direcciones: no se declaran. Accesos: se declara la raíz, si no es una instancia
+        // (la inferencia ya validó que sea una de las dos).
+        let Some(root) = var_root(name) else { continue };
+        if root.len() != name.len() {
+            if let Some(t) = known.get(&root.to_ascii_uppercase())
+                && seen.insert(root.to_ascii_uppercase())
+            {
+                result.push(t.clone());
+            }
+            continue;
+        }
         let key = name.to_ascii_uppercase();
         if !seen.insert(key.clone()) {
             continue;

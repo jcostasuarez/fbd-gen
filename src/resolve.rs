@@ -1,7 +1,7 @@
 //! Etapa 1: resolución del grafo semántico contra la librería y validación
 //! (tipos de bloque, pines, sentidos, conductores múltiples, tipos de dato).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::library::{BlockDef, Library};
 use crate::model::*;
@@ -36,10 +36,12 @@ pub fn is_literal(s: &str) -> bool {
             .all(|c| c.is_ascii_digit() || matches!(c, '_' | '.' | 'e' | 'E' | '-' | '+'))
 }
 
-pub fn parse_endpoint(s: &str, ids: &HashMap<&str, usize>) -> Endpoint {
+/// `ids`: índice de cada bloque por su id en mayúsculas (los ids, como todo nombre IEC,
+/// no distinguen mayúsculas).
+pub fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
     let s = s.trim();
     if let Some((id, pin)) = s.split_once('.')
-        && let Some(&block) = ids.get(id)
+        && let Some(&block) = ids.get(&id.to_ascii_uppercase())
     {
         return Endpoint::Pin {
             block,
@@ -205,7 +207,7 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 format!("{}: nombre de instancia inválido \"{inst}\"", b.id),
             );
         }
-        if ids.insert(b.id.as_str(), i).is_some() {
+        if ids.insert(b.id.to_ascii_uppercase(), i).is_some() {
             diags.push(
                 Level::Error,
                 STAGE,
@@ -261,9 +263,40 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
         }
     }
 
+    // Nombres de variables: una variable simple no puede llamarse como una instancia
+    // (Control Expert declararía las dos) y una declarada no puede llamarse como un id
+    // de bloque (`Motor.Run` sería ambiguo entre un pin y un campo). Un acceso a una
+    // instancia (`T1.ET`) sí es válido.
+    let mut reported = HashSet::new();
+    let declared = spec.variables.iter().map(|v| (v.name.as_str(), true));
+    let used = links
+        .iter()
+        .flat_map(|(a, b, ..)| [a, b])
+        .filter_map(|e| match e {
+            Endpoint::Var(v) => Some((v.as_str(), false)),
+            _ => None,
+        });
+    for (name, is_declared) in declared.chain(used) {
+        let Some(root) = var_root(name) else { continue };
+        let key = root.to_ascii_uppercase();
+        let message = if let Some(owner) = instances.get(&key).filter(|_| root == name) {
+            format!("variable {name}: ya es el nombre de la instancia de {owner}")
+        } else if let Some(&b) = ids.get(&key).filter(|_| is_declared) {
+            format!(
+                "variable {name}: hay un bloque con id {}; `{}.X` sería ambiguo",
+                spec.blocks[b].id, spec.blocks[b].id
+            )
+        } else {
+            continue;
+        };
+        if reported.insert(key) {
+            diags.push(Level::Error, STAGE, message);
+        }
+    }
+
     let mut comments = Vec::new();
     for c in &spec.comments {
-        match ids.get(c.at.as_str()) {
+        match ids.get(&c.at.to_ascii_uppercase()) {
             Some(&b) => comments.push((b, c.text.clone())),
             None => diags.push(
                 Level::Error,

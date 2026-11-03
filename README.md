@@ -78,6 +78,10 @@ Cada link es `[origen, destino]`; un extremo es `bloque.PIN`, un literal IEC o u
 El nombre del programa, los ids de bloque y las instancias son identificadores IEC
 (letra o `_`, después letras, dígitos o `_`; sin caracteres extendidos). Las variables
 admiten además campos (`Motor.Run`), índices (`Tab[3]`) y direcciones (`%MW100`). Un
+campo o un índice declara su raíz, que tiene que estar en `variables` (su tipo no se
+puede deducir) o ser una instancia de bloque (`T1.ET`); una dirección no se declara. Los
+ids de bloque no distinguen mayúsculas, y una variable no puede llamarse como una instancia
+ni, si está declarada, como un id de bloque (`Motor.Run` sería ambiguo). Un
 nombre inválido, un grafo sin bloques o más entradas extensibles que el máximo del
 bloque son errores de validación, antes de ejecutar el layout.
 Un campo desconocido (`instace`, `partiton`...) es un error al leer el JSON: un

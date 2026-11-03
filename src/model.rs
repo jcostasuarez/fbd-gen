@@ -338,6 +338,16 @@ pub fn is_variable_ref(s: &str) -> bool {
     })
 }
 
+/// Variable que hay que declarar para un parámetro actual: el propio nombre si es simple,
+/// la raíz de un acceso (`Motor` en `Motor.Run`, `Tab` en `Tab[3]`) o `None` para una
+/// dirección topológica (`%MW100`), que no se declara.
+pub fn var_root(name: &str) -> Option<&str> {
+    if name.starts_with('%') {
+        return None;
+    }
+    Some(&name[..name.find(['.', '[']).unwrap_or(name.len())])
+}
+
 // ---------------------------------------------------------------------------
 // Diagnósticos
 // ---------------------------------------------------------------------------

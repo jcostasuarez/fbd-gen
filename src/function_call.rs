@@ -146,7 +146,7 @@ impl Generator {
             }
         }
         let id = format!("{}_call", crate::normalize::sanitize(&spec.name));
-        let ids = HashMap::from([(id.as_str(), 0)]);
+        let ids = HashMap::from([(id.to_ascii_uppercase(), 0)]);
         let mut program = ProgramSpec::new(&spec.name);
         program.task.clone_from(&spec.task);
         program.variables.clone_from(&spec.variables);
