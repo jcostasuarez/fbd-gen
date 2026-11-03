@@ -26,6 +26,8 @@
 mod consistency;
 mod function_call;
 mod generator;
+mod graph;
+mod iec;
 mod layout;
 mod library;
 mod model;

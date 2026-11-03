@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+use crate::iec::is_literal;
 use crate::layout::{self, LayoutConfig};
 use crate::library::Library;
 use crate::model::*;
 use crate::normalize::{self, NormalizeConfig};
-use crate::resolve::{is_literal, resolve};
+use crate::resolve::resolve;
 use crate::{
     GeneratedProgram, GeneratedSection, GenerationError, Generator, GeneratorConfig, SectionSpec,
 };

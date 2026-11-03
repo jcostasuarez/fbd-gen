@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use crate::iec::is_variable_ref;
 use crate::layout::LayoutConfig;
 use crate::library::Library;
 use crate::model::*;

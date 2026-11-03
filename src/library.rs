@@ -38,6 +38,19 @@ impl Extensible {
     pub fn pin_name(&self, k: u32) -> String {
         format!("{}{}", self.prefix, self.first_index + k)
     }
+
+    /// Posición `k` (desde 0) del pin `name` en la extensión: la inversa de
+    /// [`Extensible::pin_name`], sin distinguir mayúsculas. No mira el máximo.
+    pub fn index_of(&self, name: &str) -> Option<u32> {
+        let prefix = name.get(..self.prefix.len())?;
+        if !prefix.eq_ignore_ascii_case(&self.prefix) {
+            return None;
+        }
+        name[self.prefix.len()..]
+            .parse::<u32>()
+            .ok()?
+            .checked_sub(self.first_index)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

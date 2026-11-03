@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::graph::UnionFind;
+use crate::iec::var_root;
 use crate::library::Kind;
 use crate::model::*;
 
@@ -158,30 +160,6 @@ struct Strong {
     origin: String,
 }
 
-struct UnionFind(Vec<usize>);
-
-impl UnionFind {
-    fn find(&mut self, x: usize) -> usize {
-        let mut r = x;
-        while self.0[r] != r {
-            r = self.0[r];
-        }
-        let mut c = x;
-        while self.0[c] != r {
-            let n = self.0[c];
-            self.0[c] = r;
-            c = n;
-        }
-        r
-    }
-    fn union(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.find(a), self.find(b));
-        if a != b {
-            self.0[a.max(b)] = a.min(b);
-        }
-    }
-}
-
 /// Una variable de la sección con su tipo final, en orden de primera aparición.
 #[derive(Debug, Clone)]
 pub struct TypedVar {
@@ -270,7 +248,7 @@ pub fn infer(
         }
     }
 
-    let mut uf = UnionFind((0..pin_node.len() + var_names.len()).collect());
+    let mut uf = UnionFind::new(pin_node.len() + var_names.len());
     for (a, b) in links {
         uf.union(a, b);
     }

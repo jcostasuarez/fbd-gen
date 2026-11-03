@@ -9,11 +9,11 @@
 //! Lo que no se puede respetar (ciclos entre secciones) se reporta: esa lectura toma el
 //! valor del ciclo de scan anterior.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use crate::graph::{OnCycle, topo_order as topo_order_of};
+use crate::iec::{sanitize, unique_name};
 use crate::model::*;
-use crate::normalize::sanitize;
 use crate::types::TypedVar;
 
 const STAGE: &str = "partition";
@@ -21,40 +21,19 @@ const STAGE: &str = "partition";
 /// Orden topológico de `blocks` según los cables internos; empates por orden del modelo.
 /// Los bloques en ciclos se agregan al final en orden del modelo.
 fn topo_order(section: &Section, blocks: &[usize]) -> Vec<usize> {
-    let set: HashSet<usize> = blocks.iter().copied().collect();
-    let mut indeg: HashMap<usize, usize> = blocks.iter().map(|&b| (b, 0)).collect();
-    let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
-    for w in &section.wires {
-        if set.contains(&w.from.block) && set.contains(&w.to.block) && w.from.block != w.to.block {
-            adj.entry(w.from.block).or_default().push(w.to.block);
-            *indeg.get_mut(&w.to.block).unwrap() += 1;
-        }
+    // `blocks` está en orden del modelo: los índices locales conservan ese orden.
+    let local: HashMap<usize, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
+    let edges = section.wires.iter().filter_map(|w| {
+        let (from, to) = (*local.get(&w.from.block)?, *local.get(&w.to.block)?);
+        (from != to).then_some((from, to))
+    });
+    let mut order = topo_order_of(blocks.len(), edges, OnCycle::Stop);
+    let mut done = vec![false; blocks.len()];
+    for &i in &order {
+        done[i] = true;
     }
-    let mut ready: BinaryHeap<Reverse<usize>> = blocks
-        .iter()
-        .filter(|b| indeg[b] == 0)
-        .map(|&b| Reverse(b))
-        .collect();
-    let mut order = Vec::new();
-    while let Some(Reverse(b)) = ready.pop() {
-        order.push(b);
-        for &n in adj.get(&b).into_iter().flatten() {
-            let d = indeg.get_mut(&n).unwrap();
-            *d -= 1;
-            if *d == 0 {
-                ready.push(Reverse(n));
-            }
-        }
-    }
-    let done: HashSet<usize> = order.iter().copied().collect();
-    let mut rest: Vec<usize> = blocks
-        .iter()
-        .copied()
-        .filter(|b| !done.contains(b))
-        .collect();
-    rest.sort();
-    order.extend(rest);
-    order
+    order.extend((0..blocks.len()).filter(|&i| !done[i]));
+    order.into_iter().map(|i| blocks[i]).collect()
 }
 
 /// Divide una secuencia topológica en tramos de a lo sumo `max`, eligiendo cada corte
@@ -296,16 +275,9 @@ pub fn partition(
                         section.blocks[w.from.block].label(),
                         section.pin(w.from).name
                     ));
-                    let mut name = base.clone();
-                    let mut n = 2;
-                    while used_names.contains(&name.to_ascii_uppercase()) {
-                        name = format!("{base}_{n}");
-                        n += 1;
-                    }
-                    name
+                    unique_name(&base, &mut used_names)
                 });
                 if existing.is_none() {
-                    used_names.insert(name.to_ascii_uppercase());
                     parts[from_sec].pin_mut(to_local(w.from)).param_out =
                         Some(Param::Var(name.clone()));
                     let ty = section
@@ -400,33 +372,8 @@ pub fn partition(
             }
         }
     }
-    let mut indeg = vec![0; n];
-    for &(_, to) in deps.keys() {
-        indeg[to] += 1;
-    }
-    let mut ready: BinaryHeap<Reverse<usize>> =
-        (0..n).filter(|&s| indeg[s] == 0).map(Reverse).collect();
-    let mut order = Vec::new();
-    let mut placed = vec![false; n];
-    while order.len() < n {
-        let s = match ready.pop() {
-            Some(Reverse(s)) => s,
-            // Ciclo: se rompe con la primera sección pendiente en orden del modelo.
-            None => (0..n).find(|&s| !placed[s]).unwrap(),
-        };
-        if placed[s] {
-            continue;
-        }
-        placed[s] = true;
-        order.push(s);
-        for (&(from, to), _) in deps.range((s, 0)..(s + 1, 0)) {
-            debug_assert_eq!(from, s);
-            indeg[to] -= 1;
-            if indeg[to] == 0 && !placed[to] {
-                ready.push(Reverse(to));
-            }
-        }
-    }
+    // Un ciclo se rompe con la primera sección pendiente en orden del modelo.
+    let order = topo_order_of(n, deps.keys().copied(), OnCycle::Break);
     let pos: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &s)| (s, i)).collect();
     for ((from, to), vs) in &deps {
         if pos[from] > pos[to] {

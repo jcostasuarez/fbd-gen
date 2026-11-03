@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::iec::{is_identifier, is_literal, is_variable_ref, var_root};
 use crate::library::{BlockDef, Library};
 use crate::model::*;
 
@@ -14,30 +15,6 @@ pub enum Endpoint {
     Lit(String),
 }
 
-/// Literales IEC 61131-3: booleanos, numéricos, tipados (`T#5s`, `16#FF`, `INT#3`) y strings.
-pub fn is_literal(s: &str) -> bool {
-    let s = s.trim();
-    if s.eq_ignore_ascii_case("TRUE") || s.eq_ignore_ascii_case("FALSE") {
-        return true;
-    }
-    if s.starts_with('\'') || s.starts_with('"') {
-        return true;
-    }
-    if let Some((prefix, _)) = s.split_once('#') {
-        return !prefix.is_empty()
-            && prefix
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_');
-    }
-    let body = s.strip_prefix(['-', '+']).unwrap_or(s);
-    body.starts_with(|c: char| c.is_ascii_digit())
-        && body
-            .chars()
-            .all(|c| c.is_ascii_digit() || matches!(c, '_' | '.' | 'e' | 'E' | '-' | '+'))
-}
-
-/// `ids`: índice de cada bloque por su id en mayúsculas (los ids, como todo nombre IEC,
-/// no distinguen mayúsculas).
 pub fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
     let s = s.trim();
     if let Some((id, pin)) = s.split_once('.')
@@ -68,14 +45,7 @@ fn extensible_count(
         .find_map(|(i, p)| p.extensible.as_ref().map(|e| (i, e)))?;
     let max_ref = referenced
         .iter()
-        .filter_map(|name| {
-            let rest = name.get(ext.prefix.len()..)?;
-            if !name[..ext.prefix.len()].eq_ignore_ascii_case(&ext.prefix) {
-                return None;
-            }
-            let n: u32 = rest.parse().ok()?;
-            n.checked_sub(ext.first_index).map(|k| k + 1)
-        })
+        .filter_map(|name| ext.index_of(name).map(|k| k + 1))
         .max()
         .unwrap_or(0);
     Some((idx, explicit.unwrap_or(0).max(max_ref).max(ext.min)))

@@ -83,19 +83,9 @@ fn matches_pin(pin: &PinDef, name: &str) -> bool {
     if pin.name.eq_ignore_ascii_case(name) {
         return true;
     }
-    let Some(ext) = &pin.extensible else {
-        return false;
-    };
-    let Some(prefix) = name.get(..ext.prefix.len()) else {
-        return false;
-    };
-    if !prefix.eq_ignore_ascii_case(&ext.prefix) {
-        return false;
-    }
-    name.get(ext.prefix.len()..)
-        .and_then(|s| s.parse::<u32>().ok())
-        .and_then(|n| n.checked_sub(ext.first_index))
-        .is_some_and(|offset| offset < ext.max)
+    pin.extensible
+        .as_ref()
+        .is_some_and(|ext| ext.index_of(name).is_some_and(|k| k < ext.max))
 }
 
 impl Generator {
@@ -145,7 +135,7 @@ impl Generator {
                 )));
             }
         }
-        let id = format!("{}_call", crate::normalize::sanitize(&spec.name));
+        let id = format!("{}_call", crate::iec::sanitize(&spec.name));
         let ids = HashMap::from([(id.to_ascii_uppercase(), 0)]);
         let mut program = ProgramSpec::new(&spec.name);
         program.task.clone_from(&spec.task);
@@ -176,7 +166,7 @@ impl Generator {
                         def.name
                     )));
                 }
-                if (is_output || role == "IN_OUT") && crate::resolve::is_literal(value) {
+                if (is_output || role == "IN_OUT") && crate::iec::is_literal(value) {
                     return Err(invalid(format!(
                         "{}.{pin}: {role} requiere una variable, no un literal",
                         def.name
