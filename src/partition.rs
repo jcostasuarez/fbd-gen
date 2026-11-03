@@ -1,4 +1,4 @@
-//! Etapas 3 y 4: partición del programa en secciones y orden de las secciones.
+//! Etapas 4 y 5: partición del programa en secciones y orden de las secciones.
 //!
 //! Criterios, en orden: equipo (`group`), etapa del flujo de señal (`stage`, opcional) y
 //! tamaño máximo (se subdivide siguiendo el orden topológico, así los cortes van hacia
@@ -9,53 +9,31 @@
 //! Lo que no se puede respetar (ciclos entre secciones) se reporta: esa lectura toma el
 //! valor del ciclo de scan anterior.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use crate::graph::{OnCycle, topo_order as topo_order_of};
+use crate::iec::{sanitize, unique_name};
 use crate::model::*;
-use crate::normalize::sanitize;
-use crate::resolve::{Endpoint, parse_endpoint};
 use crate::types::TypedVar;
 
-const STAGE: &str = "partition";
+const STAGE: Stage = Stage::Partition;
 
 /// Orden topológico de `blocks` según los cables internos; empates por orden del modelo.
 /// Los bloques en ciclos se agregan al final en orden del modelo.
 fn topo_order(section: &Section, blocks: &[usize]) -> Vec<usize> {
-    let set: HashSet<usize> = blocks.iter().copied().collect();
-    let mut indeg: HashMap<usize, usize> = blocks.iter().map(|&b| (b, 0)).collect();
-    let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
-    for w in &section.wires {
-        if set.contains(&w.from.block) && set.contains(&w.to.block) && w.from.block != w.to.block {
-            adj.entry(w.from.block).or_default().push(w.to.block);
-            *indeg.get_mut(&w.to.block).unwrap() += 1;
-        }
+    // `blocks` está en orden del modelo: los índices locales conservan ese orden.
+    let local: HashMap<usize, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
+    let edges = section.wires.iter().filter_map(|w| {
+        let (from, to) = (*local.get(&w.from.block)?, *local.get(&w.to.block)?);
+        (from != to).then_some((from, to))
+    });
+    let mut order = topo_order_of(blocks.len(), edges, OnCycle::Stop);
+    let mut done = vec![false; blocks.len()];
+    for &i in &order {
+        done[i] = true;
     }
-    let mut ready: BinaryHeap<Reverse<usize>> = blocks
-        .iter()
-        .filter(|b| indeg[b] == 0)
-        .map(|&b| Reverse(b))
-        .collect();
-    let mut order = Vec::new();
-    while let Some(Reverse(b)) = ready.pop() {
-        order.push(b);
-        for &n in adj.get(&b).into_iter().flatten() {
-            let d = indeg.get_mut(&n).unwrap();
-            *d -= 1;
-            if *d == 0 {
-                ready.push(Reverse(n));
-            }
-        }
-    }
-    let done: HashSet<usize> = order.iter().copied().collect();
-    let mut rest: Vec<usize> = blocks
-        .iter()
-        .copied()
-        .filter(|b| !done.contains(b))
-        .collect();
-    rest.sort();
-    order.extend(rest);
-    order
+    order.extend((0..blocks.len()).filter(|&i| !done[i]));
+    order.into_iter().map(|i| blocks[i]).collect()
 }
 
 /// Divide una secuencia topológica en tramos de a lo sumo `max`, eligiendo cada corte
@@ -101,26 +79,28 @@ fn split(section: &Section, order: &[usize], max: usize) -> Vec<Vec<usize>> {
 }
 
 pub struct Partition {
-    /// Secciones en orden de ejecución.
-    pub sections: Vec<ProgramSpec>,
+    /// Secciones en orden de ejecución: subgrafos ya resueltos y tipados, con los cables
+    /// que cruzan secciones reemplazados por variables.
+    pub sections: Vec<Section>,
+    /// Variables creadas para esos cables, con su tipo y un comentario de enlace.
+    pub link_vars: Vec<TypedVar>,
 }
 
+/// Divide el programa resuelto y tipado (`types::infer` ya corrió: los pines tienen su
+/// tipo concreto). `vars` son las variables del programa, para no repetir sus nombres.
 pub fn partition(
-    spec: &ProgramSpec,
     section: &Section,
+    cfg: &PartitionSpec,
     vars: &[TypedVar],
-    pin_types: &HashMap<PinRef, String>,
     diags: &mut Diagnostics,
 ) -> Partition {
-    let cfg = &spec.partition;
-
-    // --- Etapa 3: asignación de bloques a secciones -------------------------------
+    // --- Etapa 4: asignación de bloques a secciones -------------------------------
     let mut keys: Vec<(String, Option<String>)> = Vec::new();
     let mut members: Vec<Vec<usize>> = Vec::new();
     for (i, b) in section.blocks.iter().enumerate() {
         // La identidad se conserva antes de concatenar y sanear el nombre de archivo.
         let key = (
-            b.group.clone().unwrap_or_else(|| spec.name.clone()),
+            b.group.clone().unwrap_or_else(|| section.name.clone()),
             b.stage.clone().filter(|_| cfg.by_stage),
         );
         match keys.iter().position(|k| *k == key) {
@@ -231,22 +211,37 @@ pub fn partition(
         }
     }
 
-    // --- Cables entre secciones -> variables --------------------------------------
-    let ids: HashMap<&str, usize> = spec
-        .blocks
+    // --- Armado de las secciones ---------------------------------------------------
+    // Los bloques conservan el orden del modelo dentro de su sección.
+    let mut local = vec![0; section.blocks.len()];
+    for blocks in &groups {
+        for (i, &b) in blocks.iter().enumerate() {
+            local[b] = i;
+        }
+    }
+    let to_local = |r: PinRef| PinRef {
+        block: local[r.block],
+        pin: r.pin,
+    };
+    let mut parts: Vec<Section> = groups
         .iter()
         .enumerate()
-        .map(|(i, b)| (b.id.as_str(), i))
+        .map(|(s, blocks)| Section {
+            name: names[s].clone(),
+            blocks: blocks.iter().map(|&b| section.blocks[b].clone()).collect(),
+            wires: Vec::new(),
+            execution_dependencies: Vec::new(),
+            generated_vars: Vec::new(),
+            comments: section
+                .comments
+                .iter()
+                .filter(|(b, _)| sec_of[*b] == s)
+                .map(|(b, text)| (local[*b], text.clone()))
+                .collect(),
+        })
         .collect();
-    let pin_ref = |e: &Endpoint| -> Option<PinRef> {
-        match e {
-            Endpoint::Pin { block, pin } => section.blocks[*block].pin_index(pin).map(|p| PinRef {
-                block: *block,
-                pin: p,
-            }),
-            _ => None,
-        }
-    };
+
+    // --- Cables entre secciones -> variables --------------------------------------
     let mut used_names: HashSet<String> =
         vars.iter().map(|v| v.name.to_ascii_uppercase()).collect();
     for b in &section.blocks {
@@ -255,148 +250,102 @@ pub fn partition(
         }
     }
     let mut cross_var: HashMap<PinRef, String> = HashMap::new();
-    let mut cross_types: Vec<VarSpec> = Vec::new();
-    let mut links: Vec<Vec<LinkSpec>> = vec![Vec::new(); groups.len()];
-    for link in &spec.links {
-        let (a, b) = link.ends();
-        let (ea, eb) = (parse_endpoint(a, &ids), parse_endpoint(b, &ids));
-        let (ra, rb) = (pin_ref(&ea), pin_ref(&eb));
-        match (ra, rb) {
-            (Some(from), Some(to)) if sec_of[from.block] != sec_of[to.block] => {
-                let var = match cross_var.get(&from) {
-                    Some(v) => v.clone(),
-                    None => {
-                        // Si la salida ya escribe una variable, se reutiliza.
-                        let existing = section
-                            .pin(from)
-                            .param_out
-                            .as_ref()
-                            .map(|p| p.text().to_string());
-                        let name = existing.clone().unwrap_or_else(|| {
-                            let base = sanitize(&format!(
-                                "{}_{}",
-                                section.blocks[from.block].label(),
-                                section.pin(from).name
-                            ));
-                            let mut name = base.clone();
-                            let mut n = 2;
-                            while used_names.contains(&name.to_ascii_uppercase()) {
-                                name = format!("{base}_{n}");
-                                n += 1;
-                            }
-                            name
-                        });
-                        if existing.is_none() {
-                            used_names.insert(name.to_ascii_uppercase());
-                            links[sec_of[from.block]]
-                                .push(LinkSpec::Pair(a.to_string(), name.clone()));
-                            let ty = pin_types.get(&from).or_else(|| pin_types.get(&to)).cloned();
-                            match ty {
-                                Some(ty) => cross_types.push(VarSpec {
-                                    name: name.clone(),
-                                    ty,
-                                    address: None,
-                                    comment: Some(format!("Enlace {} -> {}", names[sec_of[from.block]], names[sec_of[to.block]])),
-                                    init: None,
-                                }),
-                                None => diags.push(Level::Error, STAGE, format!("{name}: no se pudo deducir el tipo del enlace entre secciones")),
-                            }
-                        }
-                        cross_var.insert(from, name.clone());
-                        name
-                    }
-                };
-                diags.push(
-                    Level::Info,
-                    STAGE,
-                    format!(
-                        "{a} -> {b} cruza de {} a {}: variable {var}",
-                        names[sec_of[from.block]], names[sec_of[to.block]]
-                    ),
-                );
-                links[sec_of[to.block]].push(LinkSpec::Pair(var, b.to_string()));
-            }
-            (Some(r), _) | (None, Some(r)) => links[sec_of[r.block]].push(link.clone()),
-            (None, None) => {}
+    let mut link_vars: Vec<TypedVar> = Vec::new();
+    for w in &section.wires {
+        let (from_sec, to_sec) = (sec_of[w.from.block], sec_of[w.to.block]);
+        if from_sec == to_sec {
+            parts[from_sec].wires.push(Wire {
+                from: to_local(w.from),
+                to: to_local(w.to),
+            });
+            continue;
         }
-    }
-
-    // --- Armado de las secciones ---------------------------------------------------
-    let declared: HashMap<String, &VarSpec> = spec
-        .variables
-        .iter()
-        .map(|v| (v.name.to_ascii_uppercase(), v))
-        .collect();
-    let typed: HashMap<String, &TypedVar> = vars
-        .iter()
-        .map(|v| (v.name.to_ascii_uppercase(), v))
-        .collect();
-    let cross: HashMap<String, &VarSpec> = cross_types
-        .iter()
-        .map(|v| (v.name.to_ascii_uppercase(), v))
-        .collect();
-    let mut specs = Vec::new();
-    let mut reads: Vec<BTreeSet<String>> = Vec::new();
-    let mut writes: Vec<BTreeSet<String>> = Vec::new();
-    for (s, blocks) in groups.iter().enumerate() {
-        let sec_ids: HashMap<&str, usize> = blocks
-            .iter()
-            .map(|&b| (spec.blocks[b].id.as_str(), b))
-            .collect();
-        let (mut r, mut w) = (BTreeSet::new(), BTreeSet::new());
-        let mut variables = Vec::new();
-        let mut seen = HashSet::new();
-        for l in &links[s] {
-            let (a, b) = l.ends();
-            for (e, is_src) in [(a, true), (b, false)] {
-                if let Endpoint::Var(v) = parse_endpoint(e, &sec_ids) {
-                    let key = v.to_ascii_uppercase();
-                    if is_src {
-                        r.insert(key.clone())
-                    } else {
-                        w.insert(key.clone())
-                    };
-                    if !seen.insert(key.clone()) {
-                        continue;
-                    }
-                    if let Some(d) = declared.get(&key).or_else(|| cross.get(&key)) {
-                        variables.push((*d).clone());
-                    } else if let Some(t) = typed.get(&key) {
-                        variables.push(VarSpec {
-                            name: t.name.clone(),
-                            ty: t.ty.clone(),
-                            address: None,
-                            comment: None,
-                            init: None,
-                        });
+        let var = match cross_var.get(&w.from) {
+            Some(v) => v.clone(),
+            None => {
+                // Si la salida ya escribe una variable, se reutiliza.
+                let existing = section
+                    .pin(w.from)
+                    .param_out
+                    .as_ref()
+                    .map(|p| p.text().to_string());
+                let name = existing.clone().unwrap_or_else(|| {
+                    let base = sanitize(&format!(
+                        "{}_{}",
+                        section.blocks[w.from.block].label(),
+                        section.pin(w.from).name
+                    ));
+                    unique_name(&base, &mut used_names)
+                });
+                if existing.is_none() {
+                    parts[from_sec].pin_mut(to_local(w.from)).param_out =
+                        Some(Param::Var(name.clone()));
+                    let ty = section
+                        .pin(w.from)
+                        .inferred
+                        .clone()
+                        .or_else(|| section.pin(w.to).inferred.clone());
+                    match ty {
+                        Some(ty) => link_vars.push(TypedVar {
+                            name: name.clone(),
+                            ty: ty.clone(),
+                            decl: Some(VarSpec {
+                                name: name.clone(),
+                                ty,
+                                address: None,
+                                comment: Some(format!(
+                                    "Enlace {} -> {}",
+                                    names[from_sec], names[to_sec]
+                                )),
+                                init: None,
+                            }),
+                        }),
+                        None => diags.push(
+                            Level::Error,
+                            STAGE,
+                            format!(
+                                "{name}: no se pudo deducir el tipo del enlace entre secciones"
+                            ),
+                        ),
                     }
                 }
+                cross_var.insert(w.from, name.clone());
+                name
+            }
+        };
+        diags.push(
+            Level::Info,
+            STAGE,
+            format!(
+                "{} -> {} cruza de {} a {}: variable {var}",
+                section.pin_path(w.from),
+                section.pin_path(w.to),
+                names[from_sec],
+                names[to_sec]
+            ),
+        );
+        parts[to_sec].pin_mut(to_local(w.to)).param_in = Some(Param::Var(var));
+    }
+
+    // Lecturas y escrituras de variables por sección, para ordenarlas.
+    let mut reads: Vec<BTreeSet<String>> = Vec::new();
+    let mut writes: Vec<BTreeSet<String>> = Vec::new();
+    for part in &parts {
+        let (mut r, mut w) = (BTreeSet::new(), BTreeSet::new());
+        for p in part.blocks.iter().flat_map(|b| &b.pins) {
+            if let Some(Param::Var(v)) = &p.param_in {
+                r.insert(v.to_ascii_uppercase());
+            }
+            if let Some(Param::Var(v)) = &p.param_out {
+                w.insert(v.to_ascii_uppercase());
             }
         }
         reads.push(r);
         writes.push(w);
-        let comments = spec
-            .comments
-            .iter()
-            .filter(|c| sec_ids.contains_key(c.at.as_str()))
-            .cloned()
-            .collect();
-        specs.push(ProgramSpec {
-            comments,
-            name: names[s].clone(),
-            task: spec.task.clone(),
-            variables,
-            blocks: blocks.iter().map(|&b| spec.blocks[b].clone()).collect(),
-            links: std::mem::take(&mut links[s]),
-            partition: PartitionSpec {
-                max_blocks: usize::MAX,
-                ..cfg.clone()
-            },
-        });
     }
 
-    // --- Etapa 4: orden de las secciones -------------------------------------------
-    let n = specs.len();
+    // --- Etapa 5: orden de las secciones -------------------------------------------
+    let n = parts.len();
     let mut writers: HashMap<&str, Vec<usize>> = HashMap::new();
     for (s, w) in writes.iter().enumerate() {
         for v in w {
@@ -423,33 +372,8 @@ pub fn partition(
             }
         }
     }
-    let mut indeg = vec![0; n];
-    for &(_, to) in deps.keys() {
-        indeg[to] += 1;
-    }
-    let mut ready: BinaryHeap<Reverse<usize>> =
-        (0..n).filter(|&s| indeg[s] == 0).map(Reverse).collect();
-    let mut order = Vec::new();
-    let mut placed = vec![false; n];
-    while order.len() < n {
-        let s = match ready.pop() {
-            Some(Reverse(s)) => s,
-            // Ciclo: se rompe con la primera sección pendiente en orden del modelo.
-            None => (0..n).find(|&s| !placed[s]).unwrap(),
-        };
-        if placed[s] {
-            continue;
-        }
-        placed[s] = true;
-        order.push(s);
-        for (&(from, to), _) in deps.range((s, 0)..(s + 1, 0)) {
-            debug_assert_eq!(from, s);
-            indeg[to] -= 1;
-            if indeg[to] == 0 && !placed[to] {
-                ready.push(Reverse(to));
-            }
-        }
-    }
+    // Un ciclo se rompe con la primera sección pendiente en orden del modelo.
+    let order = topo_order_of(n, deps.keys().copied(), OnCycle::Break);
     let pos: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &s)| (s, i)).collect();
     for ((from, to), vs) in &deps {
         if pos[from] > pos[to] {
@@ -472,8 +396,9 @@ pub fn partition(
         format!("orden de secciones: {}", ordered.join(" -> ")),
     );
 
-    let mut specs: Vec<Option<ProgramSpec>> = specs.into_iter().map(Some).collect();
+    let mut parts: Vec<Option<Section>> = parts.into_iter().map(Some).collect();
     Partition {
-        sections: order.iter().map(|&s| specs[s].take().unwrap()).collect(),
+        sections: order.iter().map(|&s| parts[s].take().unwrap()).collect(),
+        link_vars,
     }
 }

@@ -3,7 +3,6 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use serde_json::json;
 
 use fbd_gen::{
     Diagnostic, GenerationError, Generator, GeneratorConfig, Level, NormalizeConfig, ProgramSpec,
@@ -87,26 +86,12 @@ fn run() -> Result<bool> {
     }
 
     let dir = args.out_dir.join(&spec.name);
-    std::fs::create_dir_all(&dir)?;
-    let mut manifest = Vec::new();
+    let manifest = result
+        .write_to(&dir)
+        .with_context(|| format!("no se pudo escribir en {}", dir.display()))?;
+    println!("{}", manifest.display());
     for s in &result.sections {
-        let file = |ext: &str| format!("{}.{ext}", s.name);
-        std::fs::write(dir.join(file("xbd")), &s.xml)?;
-        std::fs::write(dir.join(file("svg")), &s.svg)?;
-        std::fs::write(dir.join(file("layout.json")), s.layout_json()?)?;
-        manifest.push(json!({ "name": s.name, "xml": file("xbd"), "svg": file("svg"), "layout": file("layout.json") }));
-    }
-    let manifest = json!({
-        "program": spec.name,
-        "task": spec.task,
-        "sections": manifest,
-        "diagnostics": result.diagnostics,
-    });
-    let path = dir.join("manifest.json");
-    std::fs::write(&path, serde_json::to_string_pretty(&manifest)?)?;
-    println!("{}", path.display());
-    for s in &result.sections {
-        println!("  {}", dir.join(format!("{}.xbd", s.name)).display());
+        println!("  {}", dir.join(s.file_name("xbd")).display());
     }
     Ok(true)
 }

@@ -2,11 +2,12 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use fbd_gen::layout::LayoutConfig;
-use fbd_gen::library::Library;
-use fbd_gen::model::*;
-use fbd_gen::normalize::{self, NormalizeConfig};
-use fbd_gen::{Generator, GeneratorConfig, resolve, types};
+use crate::iec::is_variable_ref;
+use crate::layout::LayoutConfig;
+use crate::library::Library;
+use crate::model::*;
+use crate::normalize::{self, NormalizeConfig};
+use crate::{Generator, GeneratorConfig, resolve, types};
 
 fn lib() -> &'static Library {
     static LIB: OnceLock<Library> = OnceLock::new();
@@ -35,7 +36,7 @@ fn spec(json: &str) -> ProgramSpec {
 
 #[test]
 fn fanout_source_is_placed_before_consumers_declared_first() {
-    let s = spec(include_str!("../examples/probes/fanout_order.json"));
+    let s = spec(include_str!("../../examples/probes/fanout_order.json"));
     let result = generator().generate_program(&s).unwrap();
     let out = &result.sections[0];
     let json: serde_json::Value = serde_json::from_str(&out.layout_json().unwrap()).unwrap();
@@ -91,12 +92,12 @@ fn reconverging_fanout_keeps_wires_when_network_order_is_not_enough() {
     );
 }
 
-fn partitioned(json: &str) -> fbd_gen::partition::Partition {
+fn partitioned(json: &str) -> crate::partition::Partition {
     let s = spec(json);
     let mut d = Diagnostics::default();
     let mut section = resolve::resolve(&s, lib(), &mut d).unwrap();
-    let (vars, pins) = types::infer_all(&mut section, &s.variables, &mut d);
-    let result = fbd_gen::partition::partition(&s, &section, &vars, &pins, &mut d);
+    let vars = types::infer(&mut section, &s.variables, &mut d);
+    let result = crate::partition::partition(&section, &s.partition, &vars, &mut d);
     assert!(!d.has_errors(), "{:?}", d.0);
     let unique: HashSet<String> = result
         .sections
@@ -339,4 +340,255 @@ fn structured_and_topological_variables_are_accepted() {
     for name in ["mi var", "Y<1>", "a..b", "Tab[]", "%", "1abc", ""] {
         assert!(!is_variable_ref(name), "{name}");
     }
+}
+
+#[test]
+fn unknown_fields_in_the_input_are_rejected() {
+    // Un typo del LLM no debe ignorarse: `instace` dejaría la instancia con el id.
+    for json in [
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON","instace":"Mi_Timer"}]}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"partiton":{"maxBlocks":1}}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"partition":{"maxBlock":1}}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"variables":[{"name":"V","type":"BOOL","adress":"%M1"}]}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"comments":[{"at":"t","txt":"x"}]}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"links":[{"from":"A","to":"t.IN","via":"x"}]}"#,
+    ] {
+        let error = serde_json::from_str::<ProgramSpec>(json).unwrap_err();
+        assert!(
+            error.to_string().contains("unknown field")
+                || error.to_string().contains("did not match any variant"),
+            "{json}: {error}"
+        );
+    }
+    let ok: ProgramSpec = serde_json::from_str(
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"links":[{"from":"A","to":"t.IN"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(ok.links[0].ends(), ("A", "t.IN"));
+}
+
+#[test]
+fn incompatible_elementary_types_are_errors_before_generating_xml() {
+    // BOOL -> variable -> TIME: Control Expert no compila esa sección.
+    let through_variable = spec(
+        r#"{"name":"T","blocks":[{"id":"a","type":"TON"},{"id":"b","type":"TON"}],
+        "links":[["Start","a.IN"],["T#5s","a.PT"],["a.Q","X"],["Start","b.IN"],["X","b.PT"]]}"#,
+    );
+    let error = generator().generate_program(&through_variable).unwrap_err();
+    let errors: Vec<&str> = error
+        .diagnostics()
+        .iter()
+        .filter(|d| d.level == Level::Error)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|m| m.starts_with("X: tipos incompatibles") && m.contains("a.Q")),
+        "{errors:?}"
+    );
+
+    // Lo mismo con un cable directo y con un literal tipado.
+    for json in [
+        r#"{"name":"T","blocks":[{"id":"a","type":"TON"},{"id":"b","type":"TON"}],
+        "links":[["Start","a.IN"],["T#5s","a.PT"],["a.Q","b.PT"],["Start","b.IN"]]}"#,
+        r#"{"name":"T","blocks":[{"id":"a","type":"TON"}],
+        "links":[["Start","a.IN"],["INT#5","a.PT"]]}"#,
+    ] {
+        let error = generator().generate_program(&spec(json)).unwrap_err();
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|d| d.level == Level::Error && d.message.contains("tipos incompatibles")),
+            "{json}: {:?}",
+            error.diagnostics()
+        );
+    }
+}
+
+#[test]
+fn ebool_and_bool_are_compatible() {
+    let s = spec(
+        r#"{"name":"T","variables":[{"name":"In1","type":"EBOOL"}],
+        "blocks":[{"id":"a","type":"TON"}],
+        "links":[["In1","a.IN"],["T#5s","a.PT"],["a.Q","Out1"]]}"#,
+    );
+    let result = generator().generate_program(&s).unwrap();
+    let all = result
+        .diagnostics
+        .iter()
+        .chain(result.sections.iter().flat_map(|s| &s.diagnostics));
+    assert!(
+        all.into_iter()
+            .all(|d| !d.message.contains("incompatibles"))
+    );
+}
+
+#[test]
+fn derived_type_mismatch_is_only_a_warning() {
+    // Los alias de arrays/DDT no se pueden decidir sin el diccionario del proyecto.
+    let s = spec(
+        r#"{"name":"T","variables":[{"name":"V","type":"ARRUINT2"}],
+        "blocks":[{"id":"a","type":"TON"}],
+        "links":[["Start","a.IN"],["V","a.PT"],["a.Q","Out1"]]}"#,
+    );
+    // TIME (pin) contra ARRUINT2 (declaración): uno es derivado, así que se genera
+    // igual y queda un aviso.
+    let result = generator().generate_program(&s).unwrap();
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.level == Level::Warning && d.message.contains("tipos incompatibles"))
+    );
+}
+
+#[test]
+fn program_diagnostics_are_not_repeated_in_sections() {
+    // Antes la partición volvía a resolver y tipar cada sección y el aviso salía dos veces.
+    let s = spec(
+        r#"{"name":"T","variables":[{"name":"V","type":"ARRUINT2"}],
+        "blocks":[{"id":"a","type":"TON","group":"A"},{"id":"n","type":"NOT","group":"B"}],
+        "links":[["Start","a.IN"],["V","a.PT"],["a.Q","n.IN"],["n.OUT","Out1"]]}"#,
+    );
+    let result = generator().generate_program(&s).unwrap();
+    assert_eq!(result.sections.len(), 2);
+    let types = |d: &[Diagnostic]| d.iter().filter(|d| d.stage == Stage::Types).count();
+    assert_eq!(types(&result.diagnostics), 1);
+    for section in &result.sections {
+        assert_eq!(types(&section.diagnostics), 0, "{:?}", section.diagnostics);
+        assert!(
+            section
+                .diagnostics
+                .iter()
+                .all(|d| d.stage != Stage::Validate)
+        );
+        // El .layout.json lleva los mismos diagnósticos que la sección.
+        let file: serde_json::Value =
+            serde_json::from_str(&section.layout_json().unwrap()).unwrap();
+        assert_eq!(
+            file["diagnostics"].as_array().unwrap().len(),
+            section.diagnostics.len()
+        );
+    }
+    // El cable entre secciones es una variable declarada con el tipo inferido.
+    let link = result.sections[1]
+        .variables
+        .iter()
+        .find(|v| v.name == "a_Q")
+        .unwrap();
+    assert_eq!(link.ty, "BOOL");
+    assert_eq!(link.comment.as_deref(), Some("Enlace A -> B"));
+}
+
+#[test]
+fn fanout_variable_without_a_deducible_type_is_an_error() {
+    // MOVE es genérico de punta a punta: la variable del fan-out no tiene tipo.
+    let s = spec(
+        r#"{"name":"T","blocks":[{"id":"m","type":"MOVE"},
+        {"id":"a","type":"MOVE"},{"id":"b","type":"MOVE"},{"id":"c","type":"MOVE"},{"id":"d","type":"MOVE"}],
+        "links":[["m.OUT","a.IN"],["m.OUT","b.IN"],["m.OUT","c.IN"],["m.OUT","d.IN"]]}"#,
+    );
+    let error = generator().generate_program(&s).unwrap_err();
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|d| d.level == Level::Error && d.message.starts_with("m_OUT: no se pudo deducir")),
+        "{:?}",
+        error.diagnostics()
+    );
+}
+
+#[test]
+fn accesses_declare_their_root_and_addresses_are_not_declared() {
+    let s = spec(
+        r#"{"name":"F","variables":[{"name":"Motor","type":"MOTOR_DDT"},
+            {"name":"Tab","type":"ARRAY[1..8] OF BOOL"}],
+        "blocks":[{"id":"t","type":"TON","instance":"T1"},{"id":"t2","type":"TON","instance":"T2"}],
+        "links":[["Motor.Run","t.IN"],["T#5s","t.PT"],["t.Q","Tab[3]"],
+            ["%M1","t2.IN"],["T1.ET","t2.PT"],["t2.Q","Tab[4]"]]}"#,
+    );
+    let result = generator().generate_program(&s).unwrap();
+    let section = &result.sections[0];
+    let names: Vec<&str> = section.variables.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(names, ["Motor", "Tab", "T1", "T2"]);
+    assert!(
+        section
+            .xml
+            .contains(r#"<variables name="Motor" typeName="MOTOR_DDT">"#)
+    );
+    for not_declared in ["Motor.Run", "Tab[3]", "T1.ET", "%M1"] {
+        assert!(
+            !section
+                .xml
+                .contains(&format!(r#"<variables name="{not_declared}""#)),
+            "{not_declared}"
+        );
+        assert!(
+            section
+                .xml
+                .contains(&format!(r#"effectiveParameter="{not_declared}""#))
+        );
+    }
+}
+
+#[test]
+fn access_to_an_undeclared_root_is_an_error() {
+    let s = spec(
+        r#"{"name":"F","blocks":[{"id":"t","type":"TON"}],
+        "links":[["Motor.Run","t.IN"],["T#5s","t.PT"]]}"#,
+    );
+    let error = generator().generate_program(&s).unwrap_err();
+    assert!(error.diagnostics().iter().any(|d| d.level == Level::Error
+        && d.message
+            == r#"Motor.Run: Motor tiene que estar declarada en "variables" o ser una instancia"#));
+}
+
+#[test]
+fn block_ids_are_case_insensitive_and_names_cannot_collide() {
+    let errors = |json: &str| -> Vec<String> {
+        let error = generator().generate_program(&spec(json)).unwrap_err();
+        error
+            .diagnostics()
+            .iter()
+            .filter(|d| d.level == Level::Error)
+            .map(|d| d.message.clone())
+            .collect()
+    };
+    assert_eq!(
+        errors(r#"{"name":"C","blocks":[{"id":"a","type":"NOT"},{"id":"A","type":"NOT"}]}"#),
+        ["id de bloque duplicado: A"]
+    );
+    assert_eq!(
+        errors(
+            r#"{"name":"C","variables":[{"name":"T1","type":"BOOL"}],
+            "blocks":[{"id":"t","type":"TON","instance":"T1"}],"links":[["T1","t.IN"],["T#1s","t.PT"]]}"#
+        ),
+        ["variable T1: ya es el nombre de la instancia de t"]
+    );
+    assert_eq!(
+        errors(
+            r#"{"name":"C","variables":[{"name":"Motor","type":"MOTOR_DDT"}],
+            "blocks":[{"id":"motor","type":"NOT"}],"links":[["A","motor.IN"]]}"#
+        ),
+        ["variable Motor: hay un bloque con id motor; `motor.X` sería ambiguo"]
+    );
+
+    // `INV.IN` y `inv.OUT` son pines del bloque `Inv`, también en los comentarios.
+    let result = generator()
+        .generate_program(&spec(
+            r#"{"name":"C","variables":[{"name":"X","type":"BOOL"}],
+            "blocks":[{"id":"Inv","type":"NOT"}],"links":[["X","INV.IN"],["inv.OUT","Y"]],
+            "comments":[{"at":"INV","text":"hola"}]}"#,
+        ))
+        .unwrap();
+    assert_eq!(result.sections[0].layout.text_boxes.len(), 1);
+    let names: Vec<&str> = result.sections[0]
+        .variables
+        .iter()
+        .map(|v| v.name.as_str())
+        .collect();
+    assert_eq!(names, ["X", "Y"]);
 }

@@ -1,18 +1,57 @@
-//! Etapas 7 y 8: Sugiyama por red (`sugiyama`, en celdas enteras), permutación de
-//! entradas conmutativas, comentarios de red y apilado de redes en la hoja.
+//! Etapas 8 y 9: Sugiyama por red (`sugiyama`, en celdas enteras), permutación de
+//! entradas conmutativas (`commutative_swaps` y `apply_swaps`, entre dos pasadas), comentarios de red y apilado de redes en la hoja.
 //!
 //! Antes de exportar se valida la grilla: aunque el motor ya la garantiza, un XML con
 //! bloques superpuestos o cables que se tocan no debe salir nunca.
 
 use std::collections::HashMap;
-
-use anyhow::{Result, bail};
+use std::error::Error;
+use std::fmt;
 
 use crate::model::*;
 use crate::sugiyama;
 pub use crate::sugiyama::Pos;
 
-const STAGE: &str = "layout";
+const STAGE: Stage = Stage::Layout;
+
+/// Falla del layout: el motor no pudo dibujar la red o la grilla no pasó la validación.
+#[derive(Debug)]
+pub enum LayoutError {
+    Engine(sugiyama::LayoutError),
+    Grid(String),
+}
+
+impl fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Engine(e) => write!(f, "{e}"),
+            Self::Grid(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl Error for LayoutError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Engine(e) => Some(e),
+            Self::Grid(_) => None,
+        }
+    }
+}
+
+impl From<sugiyama::LayoutError> for LayoutError {
+    fn from(e: sugiyama::LayoutError) -> Self {
+        Self::Engine(e)
+    }
+}
+
+type Result<T> = std::result::Result<T, LayoutError>;
+
+macro_rules! bail {
+    ($($arg:tt)*) => {
+        return Err(LayoutError::Grid(format!($($arg)*)))
+    };
+}
 
 /// Medidas del dibujo, en celdas de grilla.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,10 +372,17 @@ fn check(section: &Section, layout: &Layout, margins: &[Margins]) -> Result<()> 
     Ok(())
 }
 
-/// Reasigna las entradas de los bloques conmutativos según la altura de lo que las alimenta,
-/// para que los cables lleguen sin cruzarse. Devuelve `true` si cambió algo.
-fn permute_commutative(section: &mut Section, layout: &Layout, diags: &mut Diagnostics) -> bool {
-    let mut changed = false;
+/// Reasignación de las entradas conmutativas de un bloque: la conexión del pin `from`
+/// pasa al pin `slot`.
+pub struct InputSwap {
+    block: usize,
+    mapping: HashMap<usize, usize>,
+}
+
+/// Entradas de los bloques conmutativos a reasignar según la altura de lo que las
+/// alimenta en `layout`, para que los cables lleguen sin cruzarse. Vacío si ya están bien.
+pub fn commutative_swaps(section: &Section, layout: &Layout) -> Vec<InputSwap> {
+    let mut swaps = Vec::new();
     for bi in 0..section.blocks.len() {
         let group: Vec<usize> = (0..section.blocks[bi].pins.len())
             .filter(|&pi| section.blocks[bi].pins[pi].permutable)
@@ -346,7 +392,7 @@ fn permute_commutative(section: &mut Section, layout: &Layout, diags: &mut Diagn
         }
         let by = layout.blocks[bi].y;
         // Clave = altura de la fuente si viene por cable; si no, la fila actual del pin.
-        let keys: Vec<(i32, usize)> = group
+        let mut keys: Vec<(i32, usize)> = group
             .iter()
             .map(|&pi| {
                 let r = PinRef { block: bi, pin: pi };
@@ -359,53 +405,56 @@ fn permute_commutative(section: &mut Section, layout: &Layout, diags: &mut Diagn
                 (key, pi)
             })
             .collect();
-        let mut sorted = keys.clone();
-        sorted.sort();
+        keys.sort();
         // El slot k (en orden de fila) recibe la conexión con la k-ésima clave más chica.
-        let mapping: HashMap<usize, usize> = sorted
+        let mapping: HashMap<usize, usize> = keys
             .iter()
             .zip(&group)
             .map(|(&(_, from_pin), &slot)| (from_pin, slot))
             .collect();
-        if mapping.iter().all(|(a, b)| a == b) {
-            continue;
+        if mapping.iter().any(|(a, b)| a != b) {
+            swaps.push(InputSwap { block: bi, mapping });
         }
-        let params: HashMap<usize, Option<Param>> = group
-            .iter()
-            .map(|&pi| (pi, section.blocks[bi].pins[pi].param_in.clone()))
+    }
+    swaps
+}
+
+/// Aplica las reasignaciones: mueve parámetros y destinos de cables. Es la única etapa
+/// del layout que cambia la sección, y no cambia su significado (entradas conmutativas).
+pub fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mut Diagnostics) {
+    for swap in swaps {
+        let block = &mut section.blocks[swap.block];
+        let params: HashMap<usize, Option<Param>> = swap
+            .mapping
+            .keys()
+            .map(|&pi| (pi, block.pins[pi].param_in.clone()))
             .collect();
-        for (&from_pin, &slot) in &mapping {
-            section.blocks[bi].pins[slot].param_in = params[&from_pin].clone();
+        for (&from_pin, &slot) in &swap.mapping {
+            block.pins[slot].param_in = params[&from_pin].clone();
         }
-        for w in section.wires.iter_mut().filter(|w| w.to.block == bi) {
-            if let Some(&slot) = mapping.get(&w.to.pin) {
+        for w in section
+            .wires
+            .iter_mut()
+            .filter(|w| w.to.block == swap.block)
+        {
+            if let Some(&slot) = swap.mapping.get(&w.to.pin) {
                 w.to.pin = slot;
             }
         }
-        changed = true;
         diags.push(
             Level::Info,
             STAGE,
             format!(
                 "{}: entradas conmutativas reordenadas",
-                section.blocks[bi].id
+                section.blocks[swap.block].id
             ),
         );
     }
-    changed
 }
 
-pub fn layout(
-    section: &mut Section,
-    nets: &[Vec<usize>],
-    cfg: &LayoutConfig,
-    diags: &mut Diagnostics,
-) -> Result<Layout> {
-    let first = run_once(section, nets, cfg)?;
-    if permute_commutative(section, &first, diags) {
-        return run_once(section, nets, cfg);
-    }
-    Ok(first)
+/// Dibuja las redes en la grilla y valida el resultado. No modifica la sección.
+pub fn layout(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Result<Layout> {
+    run_once(section, nets, cfg)
 }
 
 #[cfg(test)]
@@ -422,6 +471,7 @@ mod tests {
             permutable: false,
             param_in: None,
             param_out: None,
+            inferred: None,
         };
         Block {
             id: id.into(),

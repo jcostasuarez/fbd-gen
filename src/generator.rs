@@ -1,16 +1,19 @@
 //! API principal de generación y registro de bloques externos.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::library::{BlockDef, Library, LibraryError};
 use crate::model::{
     self, BlockSpec, CommentSpec, Diagnostic, Diagnostics, Level, PartitionSpec, ProgramSpec,
-    VarSpec,
+    Section, VarSpec,
 };
+use crate::types::TypedVar;
 use crate::{ConsistencyConfig, LayoutConfig, NormalizeConfig};
 use crate::{consistency, layout, normalize, output, partition, resolve, types, xef};
 
@@ -87,10 +90,77 @@ pub struct GeneratedSection {
     pub svg: String,
 }
 
+impl GeneratedProgram {
+    /// Contenido de `manifest.json`: las secciones en orden de ejecución, con sus archivos,
+    /// y los diagnósticos del programa. Es el formato que leen `scripts/ce_check.py` y
+    /// `scripts/roundtrip_diff.py`.
+    pub fn manifest_json(&self) -> Result<String, serde_json::Error> {
+        // Campos en orden alfabético: es el orden histórico del archivo.
+        #[derive(Serialize)]
+        struct Manifest<'a> {
+            diagnostics: &'a [Diagnostic],
+            program: &'a str,
+            sections: Vec<ManifestSection>,
+            task: &'a str,
+        }
+        #[derive(Serialize)]
+        struct ManifestSection {
+            layout: String,
+            name: String,
+            svg: String,
+            xml: String,
+        }
+        serde_json::to_string_pretty(&Manifest {
+            diagnostics: &self.diagnostics,
+            program: &self.name,
+            sections: self
+                .sections
+                .iter()
+                .map(|s| ManifestSection {
+                    layout: s.file_name("layout.json"),
+                    name: s.name.clone(),
+                    svg: s.file_name("svg"),
+                    xml: s.file_name("xbd"),
+                })
+                .collect(),
+            task: &self.task,
+        })
+    }
+
+    /// Escribe en `dir` lo mismo que la CLI: por sección `.xbd`, `.svg` y `.layout.json`,
+    /// más `manifest.json`. Crea la carpeta si no existe y devuelve la ruta del manifest.
+    pub fn write_to(&self, dir: impl AsRef<Path>) -> io::Result<PathBuf> {
+        let dir = dir.as_ref();
+        std::fs::create_dir_all(dir)?;
+        for s in &self.sections {
+            std::fs::write(dir.join(s.file_name("xbd")), &s.xml)?;
+            std::fs::write(dir.join(s.file_name("svg")), &s.svg)?;
+            std::fs::write(dir.join(s.file_name("layout.json")), s.layout_json()?)?;
+        }
+        let path = dir.join("manifest.json");
+        std::fs::write(&path, self.manifest_json()?)?;
+        Ok(path)
+    }
+}
+
 impl GeneratedSection {
-    /// Formato `.layout.json`, compatible con la CLI y sin XML/SVG duplicados.
+    /// Archivo de la sección con la extensión dada (`xbd`, `svg`, `layout.json`).
+    pub fn file_name(&self, extension: &str) -> String {
+        format!("{}.{extension}", self.name)
+    }
+
+    /// Formato `.layout.json`: el layout más los diagnósticos de la sección, sin XML/SVG.
     pub fn layout_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.layout)
+        #[derive(Serialize)]
+        struct LayoutFile<'a> {
+            #[serde(flatten)]
+            layout: &'a output::OutSection,
+            diagnostics: &'a [Diagnostic],
+        }
+        serde_json::to_string_pretty(&LayoutFile {
+            layout: &self.layout,
+            diagnostics: &self.diagnostics,
+        })
     }
 }
 
@@ -253,31 +323,61 @@ fn invalid(spec: &ProgramSpec, diags: Diagnostics) -> GenerationError {
     }
 }
 
-pub(crate) fn generate_section_with(
+/// Variables conocidas por nombre (sin distinguir mayúsculas).
+type VarTable = HashMap<String, TypedVar>;
+
+fn var_table(vars: impl IntoIterator<Item = TypedVar>) -> VarTable {
+    vars.into_iter()
+        .map(|v| (v.name.to_ascii_uppercase(), v))
+        .collect()
+}
+
+/// Etapas comunes de entrada: resolución contra la librería e inferencia de tipos. Los
+/// errores de tipos quedan en `diags` para que el llamador corte cuando corresponda.
+fn resolve_and_type(
     spec: &ProgramSpec,
     lib: &Library,
+    diags: &mut Diagnostics,
+) -> Option<(Section, Vec<TypedVar>)> {
+    let mut section = resolve::resolve(spec, lib, diags)?;
+    let vars = types::infer(&mut section, &spec.variables, diags);
+    Some((section, vars))
+}
+
+/// Etapas 5 a 8 sobre una sección resuelta y tipada: normalización, redes, layout y
+/// exportación. `diags` trae lo que ya se reportó para esta sección.
+fn render_section(
+    mut section: Section,
+    task: &str,
+    known: &VarTable,
     cfg: &GeneratorConfig,
+    mut diags: Diagnostics,
 ) -> Result<GeneratedSection, GenerationError> {
-    validate_config(cfg)?;
-    let mut diags = Diagnostics::default();
-    let Some(mut section) = resolve::resolve(spec, lib, &mut diags) else {
-        return Err(invalid(spec, diags));
-    };
     normalize::normalize(&mut section, &cfg.normalization, &mut diags);
     let nets = normalize::networks(&section);
-    let vars = types::infer(&mut section, &spec.variables, &mut diags);
+    let vars = types::section_vars(&section, known, &mut diags);
     if diags.has_errors() {
-        return Err(invalid(spec, diags));
+        return Err(GenerationError::InvalidInput {
+            scope: section.name.clone(),
+            diagnostics: diags.0,
+        });
     }
-    let placed =
-        layout::layout(&mut section, &nets, &cfg.layout, &mut diags).map_err(|source| {
-            GenerationError::Layout {
-                section: spec.name.clone(),
-                source: source.into(),
-            }
-        })?;
-    let data = output::to_output(&section, &nets, &placed, &diags);
-    let xml = xef::to_exchange_xml(&section, &placed, &spec.task, &vars);
+    let place = |section: &Section| {
+        layout::layout(section, &nets, &cfg.layout).map_err(|source| GenerationError::Layout {
+            section: section.name.clone(),
+            source: source.into(),
+        })
+    };
+    // Primera pasada; si las entradas conmutativas quedan cruzadas se reasignan según
+    // ese dibujo y se dibuja de nuevo.
+    let mut placed = place(&section)?;
+    let swaps = layout::commutative_swaps(&section, &placed);
+    if !swaps.is_empty() {
+        layout::apply_swaps(&mut section, &swaps, &mut diags);
+        placed = place(&section)?;
+    }
+    let data = output::to_output(&section, &nets, &placed);
+    let xml = xef::to_exchange_xml(&section, &placed, task, &vars);
     let svg = output::to_svg(&section, &placed);
     let mut variables: Vec<VarSpec> = vars
         .into_iter()
@@ -295,14 +395,29 @@ pub(crate) fn generate_section_with(
             .filter_map(|b| b.instance.as_ref().map(|i| VarSpec::new(i, &b.ty))),
     );
     Ok(GeneratedSection {
-        name: spec.name.clone(),
-        task: spec.task.clone(),
+        name: section.name,
+        task: task.to_string(),
         diagnostics: diags.0,
         layout: data,
         variables,
         xml,
         svg,
     })
+}
+
+pub(crate) fn generate_section_with(
+    spec: &ProgramSpec,
+    lib: &Library,
+    cfg: &GeneratorConfig,
+) -> Result<GeneratedSection, GenerationError> {
+    validate_config(cfg)?;
+    let mut diags = Diagnostics::default();
+    let Some((section, vars)) =
+        resolve_and_type(spec, lib, &mut diags).filter(|_| !diags.has_errors())
+    else {
+        return Err(invalid(spec, diags));
+    };
+    render_section(section, &spec.task, &var_table(vars), cfg, diags)
 }
 
 pub(crate) fn generate_program_with(
@@ -312,38 +427,37 @@ pub(crate) fn generate_program_with(
 ) -> Result<GeneratedProgram, GenerationError> {
     validate_config(cfg)?;
     let mut diags = Diagnostics::default();
-    let Some(mut section) = resolve::resolve(spec, lib, &mut diags) else {
+    let Some((section, vars)) = resolve_and_type(spec, lib, &mut diags) else {
         return Err(invalid(spec, diags));
     };
+    // La consistencia se informa aunque haya errores de tipos: suele explicarlos.
     consistency::check(&section, &cfg.consistency, &mut diags);
-    let (vars, pins) = types::infer_all(&mut section, &spec.variables, &mut diags);
     if diags.has_errors() {
         return Err(invalid(spec, diags));
     }
-    let part = partition::partition(spec, &section, &vars, &pins, &mut diags);
+    let part = partition::partition(&section, &spec.partition, &vars, &mut diags);
     if diags.has_errors() {
         return Err(invalid(spec, diags));
     }
+    let known = var_table(vars.into_iter().chain(part.link_vars));
     let mut sections = Vec::new();
-    for spec in part.sections {
-        let mut result = generate_section_with(&spec, lib, cfg).map_err(|error| match error {
-            GenerationError::InvalidInput {
-                scope,
-                mut diagnostics,
-            } => {
-                let mut all = diags.0.clone();
-                all.append(&mut diagnostics);
+    for section in part.sections {
+        let result = render_section(section, &spec.task, &known, cfg, Diagnostics::default())
+            .map_err(|error| match error {
+                // El error de una sección se informa con el contexto del programa.
                 GenerationError::InvalidInput {
                     scope,
-                    diagnostics: all,
+                    mut diagnostics,
+                } => {
+                    let mut all = diags.0.clone();
+                    all.append(&mut diagnostics);
+                    GenerationError::InvalidInput {
+                        scope,
+                        diagnostics: all,
+                    }
                 }
-            }
-            error => error,
-        })?;
-        result
-            .diagnostics
-            .retain(|d| d.stage != "validate" || d.level == Level::Error);
-        result.layout.diagnostics.clone_from(&result.diagnostics);
+                error => error,
+            })?;
         sections.push(result);
     }
     Ok(GeneratedProgram {

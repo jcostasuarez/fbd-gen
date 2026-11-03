@@ -1,16 +1,17 @@
-//! Etapa 5: normalizaciones que bajan la complejidad del dibujo antes del layout.
+//! Etapa 6: normalizaciones que bajan la complejidad del dibujo antes del layout.
 //! Decide cable o variable: realimentaciones y fan-out alto.
 //!
 //! Una salida puede escribir una variable y a la vez tener cables (verificado en Control
 //! Expert 15.1): por eso una realimentación corta solo el cable que cierra el lazo y deja
 //! los demás cables de esa salida como están.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::graph::{OnCycle, UnionFind, topo_order};
+use crate::iec::{sanitize, unique_name};
 use crate::model::*;
 
-const STAGE: &str = "normalize";
+const STAGE: Stage = Stage::Normalize;
 
 #[derive(Debug, Clone)]
 pub struct NormalizeConfig {
@@ -92,18 +93,6 @@ fn existing_names(section: &Section) -> HashSet<String> {
     names
 }
 
-/// Identificador IEC válido a partir de un texto arbitrario.
-pub fn sanitize(s: &str) -> String {
-    let mut out: String = s
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) {
-        out.insert(0, 'V');
-    }
-    out
-}
-
 /// Reemplaza por una variable el cable de `out` a `only`, o todos los cables de `out`.
 /// La salida pasa a escribir la variable (si no escribía ya una) y los destinos la leen.
 fn to_variable(
@@ -132,15 +121,11 @@ fn to_variable(
                 section.blocks[out.block].label(),
                 section.pin(out).name
             ));
-            let mut name = base.clone();
-            let mut n = 2;
-            while names.contains(&name.to_ascii_uppercase()) {
-                name = format!("{base}_{n}");
-                n += 1;
-            }
-            names.insert(name.to_ascii_uppercase());
-            // El tipo definitivo lo fija la inferencia de tipos (types.rs).
-            let ty = section.pin(out).ty.clone();
+            let name = unique_name(&base, names);
+            // La inferencia (types.rs) corre antes y deja el tipo concreto en el pin. Si
+            // no lo pudo deducir, queda el genérico y `types::section_vars` lo reporta.
+            let pin = section.pin(out);
+            let ty = pin.inferred.clone().unwrap_or_else(|| pin.ty.clone());
             section.generated_vars.push(GeneratedVar {
                 name: name.clone(),
                 ty,
@@ -233,7 +218,7 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
     comp
 }
 
-/// Etapa 6: redes = componentes conexos por cables, ordenadas por las dependencias
+/// Etapa 7: redes = componentes conexos por cables, ordenadas por las dependencias
 /// anteriores al corte de fan-out. Los empates respetan el orden del modelo.
 pub fn networks(section: &Section) -> Vec<Vec<usize>> {
     ordered_networks(section).expect("la normalización conserva las dependencias de ejecución")
@@ -241,34 +226,15 @@ pub fn networks(section: &Section) -> Vec<Vec<usize>> {
 
 fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
     let n = section.blocks.len();
-    let mut parent: Vec<usize> = (0..n).collect();
-    fn find(p: &mut [usize], x: usize) -> usize {
-        let mut r = x;
-        while p[r] != r {
-            r = p[r];
-        }
-        let mut c = x;
-        while p[c] != r {
-            let next = p[c];
-            p[c] = r;
-            c = next;
-        }
-        r
-    }
+    let mut uf = UnionFind::new(n);
     for w in &section.wires {
-        let (a, b) = (
-            find(&mut parent, w.from.block),
-            find(&mut parent, w.to.block),
-        );
-        if a != b {
-            parent[a.max(b)] = a.min(b);
-        }
+        uf.union(w.from.block, w.to.block);
     }
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut index: HashMap<usize, usize> = HashMap::new();
     let mut network_of = vec![0; n];
     for (b, net) in network_of.iter_mut().enumerate() {
-        let r = find(&mut parent, b);
+        let r = uf.find(b);
         let g = *index.entry(r).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1
@@ -296,25 +262,11 @@ fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
         .map(|&(a, b)| (network_of[a], network_of[b]))
         .filter(|(a, b)| a != b)
         .collect();
-    let mut indeg = vec![0; groups.len()];
-    let mut successors = vec![Vec::new(); groups.len()];
-    for (from, to) in deps {
-        indeg[to] += 1;
-        successors[from].push(to);
-    }
-    let mut ready: BinaryHeap<Reverse<usize>> = (0..groups.len())
-        .filter(|&g| indeg[g] == 0)
-        .map(Reverse)
-        .collect();
-    let mut ordered = Vec::new();
-    while let Some(Reverse(g)) = ready.pop() {
-        ordered.push(std::mem::take(&mut groups[g]));
-        for &to in &successors[g] {
-            indeg[to] -= 1;
-            if indeg[to] == 0 {
-                ready.push(Reverse(to));
-            }
-        }
-    }
-    (ordered.len() == groups.len()).then_some(ordered)
+    let order = topo_order(groups.len(), deps, OnCycle::Stop);
+    (order.len() == groups.len()).then(|| {
+        order
+            .into_iter()
+            .map(|g| std::mem::take(&mut groups[g]))
+            .collect()
+    })
 }

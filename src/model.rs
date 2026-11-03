@@ -32,6 +32,7 @@ use crate::library::Kind;
 /// Cada extremo de un link es `bloque.PIN`, un literal IEC (`TRUE`, `5`, `T#5s`,
 /// `16#FF`, `'texto'`) o, si no es ninguna de las dos cosas, una variable.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProgramSpec {
     pub name: String,
     /// Tarea dueña de la sección (MAST por defecto).
@@ -66,15 +67,16 @@ impl ProgramSpec {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommentSpec {
     /// Id de un bloque de la red comentada.
     pub at: String,
     pub text: String,
 }
 
-/// Criterios de partición en secciones (etapa 3).
+/// Criterios de partición en secciones (etapa 4).
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PartitionSpec {
     /// Además del equipo (`group`), separar por etapa del flujo de señal (`stage`).
     pub by_stage: bool,
@@ -96,6 +98,7 @@ pub(crate) fn default_task() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VarSpec {
     pub name: String,
     #[serde(rename = "type")]
@@ -119,6 +122,7 @@ impl VarSpec {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BlockSpec {
     pub id: String,
     #[serde(rename = "type")]
@@ -151,7 +155,7 @@ impl BlockSpec {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum LinkSpec {
     Pair(String, String),
     Object { from: String, to: String },
@@ -216,6 +220,9 @@ pub struct Pin {
     pub param_in: Option<Param>,
     /// Parámetro del lado derecho (salidas, IN_OUT).
     pub param_out: Option<Param>,
+    /// Tipo concreto deducido por la inferencia (`types`), si se pudo deducir. Viaja con
+    /// el pin cuando la partición copia el bloque a su sección.
+    pub inferred: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -296,42 +303,6 @@ impl Section {
 }
 
 // ---------------------------------------------------------------------------
-// Nombres
-// ---------------------------------------------------------------------------
-
-/// Identificador IEC con la configuración por defecto de Control Expert (sin caracteres
-/// extendidos): letra o `_` seguida de letras, dígitos o `_`.
-pub fn is_identifier(s: &str) -> bool {
-    let mut chars = s.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// Variable que se puede escribir como parámetro actual: un identificador con campos
-/// (`Motor.Run`) o índices (`Tab[3]`) opcionales, o una dirección topológica (`%MW100`).
-pub fn is_variable_ref(s: &str) -> bool {
-    if let Some(address) = s.strip_prefix('%') {
-        return address.starts_with(|c: char| c.is_ascii_alphabetic())
-            && address
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.');
-    }
-    s.split('.').all(|part| {
-        let (head, index) = part.split_at(part.find('[').unwrap_or(part.len()));
-        is_identifier(head)
-            && (index.is_empty()
-                || index.starts_with('[')
-                    && index.ends_with(']')
-                    && index.len() > 2
-                    && index
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || "_,[]".contains(c)))
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Diagnósticos
 // ---------------------------------------------------------------------------
 
@@ -343,10 +314,42 @@ pub enum Level {
     Info,
 }
 
+/// Etapa del pipeline que emitió un diagnóstico. Se serializa en minúsculas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum Stage {
+    Validate,
+    Types,
+    Consistency,
+    Partition,
+    Normalize,
+    Layout,
+}
+
+impl Stage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stage::Validate => "validate",
+            Stage::Types => "types",
+            Stage::Consistency => "consistency",
+            Stage::Partition => "partition",
+            Stage::Normalize => "normalize",
+            Stage::Layout => "layout",
+        }
+    }
+}
+
+impl std::fmt::Display for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: Level,
-    pub stage: &'static str,
+    pub stage: Stage,
     pub message: String,
 }
 
@@ -354,7 +357,7 @@ pub struct Diagnostic {
 pub struct Diagnostics(pub Vec<Diagnostic>);
 
 impl Diagnostics {
-    pub fn push(&mut self, level: Level, stage: &'static str, message: impl Into<String>) {
+    pub fn push(&mut self, level: Level, stage: Stage, message: impl Into<String>) {
         self.0.push(Diagnostic {
             level,
             stage,

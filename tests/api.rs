@@ -121,6 +121,35 @@ fn catalog_read_errors_are_typed_and_keep_the_source() {
 }
 
 #[test]
+fn base_catalog_is_validated_like_registered_blocks() {
+    let block = |name: &str, kind: &str, pin: &str| {
+        format!(
+            r#"{{"name":"{name}","kind":"{kind}","geometry":{{"inputs":[{{"name":"{pin}","type":"BOOL","position":1}}]}},"size":{{"width":7}}}}"#
+        )
+    };
+    let catalog = |blocks: &[String]| format!(r#"{{"blocks":[{}]}}"#, blocks.join(","));
+    let invalid = |json: String| match Library::from_json_str(&json) {
+        Err(LibraryError::InvalidDefinition { block, message }) => format!("{block}: {message}"),
+        Err(LibraryError::DuplicateBlock { name }) => format!("duplicado {name}"),
+        other => panic!("{other:?}"),
+    };
+
+    assert!(Library::from_json_str(&catalog(&[block("MI_EF", "EF", "IN")])).is_ok());
+    assert_eq!(
+        invalid(catalog(&[block("MI_FB", "FB", "IN")])),
+        r#"MI_FB: tipo de bloque desconocido "FB" (EF, EFB o DFB)"#
+    );
+    assert_eq!(
+        invalid(catalog(&[
+            block("MI_EF", "EF", "IN"),
+            block("mi_ef", "EF", "IN")
+        ])),
+        "duplicado mi_ef"
+    );
+    assert!(invalid(catalog(&[block("MI_EF", "EF", "EN")])).starts_with("MI_EF: pin EN"));
+}
+
+#[test]
 fn registered_dfb_exports_instance_wires_variables_and_both_in_out_sides() {
     let mut generator = generator();
     generator
@@ -308,4 +337,38 @@ fn cli_accepts_custom_dfb_catalog_and_preserves_the_manifest_format() {
             .unwrap()
             .contains("P201_Motor")
     );
+}
+
+#[test]
+fn programs_write_the_same_files_as_the_cli() {
+    let json = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/planta_bombas.json"),
+    )
+    .unwrap();
+    let spec: ProgramSpec = serde_json::from_str(&json).unwrap();
+    let program = Generator::embedded()
+        .unwrap()
+        .generate_program(&spec)
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("fbd-gen-api-write-{}", std::process::id()));
+    let manifest_path = program.write_to(&dir).unwrap();
+    assert_eq!(manifest_path, dir.join("manifest.json"));
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["program"], "Planta_Bombas");
+    let sections = manifest["sections"].as_array().unwrap();
+    assert_eq!(sections.len(), program.sections.len());
+    for (entry, section) in sections.iter().zip(&program.sections) {
+        assert_eq!(entry["name"], section.name.as_str());
+        for (key, ext) in [("xml", "xbd"), ("svg", "svg"), ("layout", "layout.json")] {
+            assert_eq!(entry[key], section.file_name(ext).as_str());
+            assert!(dir.join(section.file_name(ext)).is_file());
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join(section.file_name("xbd"))).unwrap(),
+            section.xml
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }

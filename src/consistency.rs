@@ -1,4 +1,4 @@
-//! Etapa 2: control de consistencia entre equipos (`group`) por hash de subgrafos.
+//! Etapa 3: control de consistencia entre equipos (`group`) por hash de subgrafos.
 //!
 //! Cada equipo se reduce a un grafo etiquetado (tipo de bloque, pines, cables internos,
 //! variables con el nombre del equipo reemplazado por `{G}`) y se le calcula un hash
@@ -7,13 +7,12 @@
 //! una variante intencional: se reporta con la diferencia concreta. Dentro de un típico,
 //! los literales que difieren de la mayoría (`T#5s` contra `T#50s`) se reportan aparte.
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
 use crate::model::*;
 
-const STAGE: &str = "consistency";
+const STAGE: Stage = Stage::Consistency;
 
 #[derive(Debug, Clone)]
 pub struct ConsistencyConfig {
@@ -32,8 +31,25 @@ impl Default for ConsistencyConfig {
     }
 }
 
+/// FNV-1a de 64 bits. A diferencia de `DefaultHasher`, su algoritmo no cambia entre
+/// versiones de Rust: los clusters, y el orden de sus diagnósticos, son reproducibles.
+struct Fnv(u64);
+
+impl Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}
+
 fn h<T: Hash>(v: &T) -> u64 {
-    let mut s = DefaultHasher::new();
+    let mut s = Fnv(0xcbf2_9ce4_8422_2325);
     v.hash(&mut s);
     s.finish()
 }

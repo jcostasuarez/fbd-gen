@@ -14,6 +14,15 @@ use crate::layout::Layout;
 use crate::model::*;
 use crate::types::TypedVar;
 
+/// Fecha fija de la cabecera: la importación no la usa y una fecha real haría que la
+/// misma entrada genere archivos distintos (las pruebas comparan la salida byte a byte).
+const HEADER_DATE_TIME: &str = "date_and_time#2026-1-1-0:0:0";
+
+/// Valor de `content` con el que se verificaron la importación, la compilación y el
+/// round-trip en Control Expert 15.1 (ver README). Aunque el archivo es una sección, no
+/// se probó otro valor: cambiarlo requiere repetir esa verificación.
+const HEADER_CONTENT: &str = "Derived Function Block source file";
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -49,7 +58,10 @@ pub fn to_exchange_xml(
     x.push_str(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<FBDExchangeFile>\n",
     );
-    x.push_str("\t<fileHeader company=\"Schneider Automation\" product=\"Control Expert V15.1\" dateTime=\"date_and_time#2026-1-1-0:0:0\" content=\"Derived Function Block source file\" DTDVersion=\"41\"></fileHeader>\n");
+    let _ = writeln!(
+        x,
+        "\t<fileHeader company=\"Schneider Automation\" product=\"Control Expert V15.1\" dateTime=\"{HEADER_DATE_TIME}\" content=\"{HEADER_CONTENT}\" DTDVersion=\"41\"></fileHeader>"
+    );
     x.push_str("\t<contentHeader name=\"Project\" version=\"0.0.000\"></contentHeader>\n");
     x.push_str("\t<program>\n");
     let _ = writeln!(

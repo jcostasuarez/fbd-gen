@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::{BlockDef, Kind, Library, PinDef};
-use crate::model::is_identifier as identifier;
+use crate::iec::is_identifier as identifier;
 
 /// Errores de lectura y registro del catálogo, sin reemplazos implícitos.
 #[derive(Debug)]
@@ -168,12 +168,7 @@ fn validate(def: &BlockDef) -> Result<(), LibraryError> {
             if name.eq_ignore_ascii_case(first) {
                 continue;
             }
-            if let Some(index) = name
-                .strip_prefix(&ext.prefix.to_ascii_uppercase())
-                .and_then(|s| s.parse::<u32>().ok())
-                && index >= ext.first_index
-                && index - ext.first_index < ext.max
-            {
+            if ext.index_of(name).is_some_and(|k| k < ext.max) {
                 return Err(bad(format!("el pin {name} colisiona con la extensión")));
             }
         }

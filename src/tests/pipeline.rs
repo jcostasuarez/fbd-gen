@@ -1,14 +1,27 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use fbd_gen::layout::{self, LayoutConfig};
-use fbd_gen::library::Library;
-use fbd_gen::model::*;
-use fbd_gen::normalize::{self, NormalizeConfig};
-use fbd_gen::resolve::{is_literal, resolve};
-use fbd_gen::{
+use crate::iec::is_literal;
+use crate::layout::{self, LayoutConfig};
+use crate::library::Library;
+use crate::model::*;
+use crate::normalize::{self, NormalizeConfig};
+use crate::resolve::resolve;
+use crate::{
     GeneratedProgram, GeneratedSection, GenerationError, Generator, GeneratorConfig, SectionSpec,
 };
+
+/// Layout con la reasignación de entradas conmutativas, como en `render_section`.
+fn place(sec: &mut Section, nets: &[Vec<usize>], d: &mut Diagnostics) -> layout::Layout {
+    let cfg = LayoutConfig::default();
+    let first = layout::layout(sec, nets, &cfg).unwrap();
+    let swaps = layout::commutative_swaps(sec, &first);
+    if swaps.is_empty() {
+        return first;
+    }
+    layout::apply_swaps(sec, &swaps, d);
+    layout::layout(sec, nets, &cfg).unwrap()
+}
 
 fn lib() -> &'static Library {
     static LIB: OnceLock<Library> = OnceLock::new();
@@ -156,7 +169,7 @@ fn commutative_inputs_follow_sources() {
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut sec, &NormalizeConfig::default(), &mut d);
     let nets = normalize::networks(&sec);
-    let lay = layout::layout(&mut sec, &nets, &LayoutConfig::default(), &mut d).unwrap();
+    let lay = place(&mut sec, &nets, &mut d);
 
     // Sin cruces: el orden vertical de las fuentes coincide con el de los pines destino.
     let mut ends: Vec<(i32, i32)> = lay
@@ -184,7 +197,7 @@ fn types_are_inferred_through_generic_blocks() {
     );
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
-    let vars = fbd_gen::types::infer(&mut sec, &s.variables, &mut d);
+    let vars = crate::types::infer(&mut sec, &s.variables, &mut d);
     let ty = |n: &str| vars.iter().find(|v| v.name == n).unwrap().ty.clone();
     assert_eq!(ty("TT1"), "REAL");
     assert_eq!(ty("TT2"), "REAL");
@@ -199,7 +212,7 @@ fn untyped_variable_is_an_error() {
     );
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
-    fbd_gen::types::infer(&mut sec, &s.variables, &mut d);
+    crate::types::infer(&mut sec, &s.variables, &mut d);
     assert!(d.has_errors());
 }
 
@@ -255,7 +268,7 @@ fn program_diagnostics(json: &str) -> Vec<Diagnostic> {
     }
 }
 
-fn messages(d: &[Diagnostic], level: Level, stage: &str) -> Vec<String> {
+fn messages(d: &[Diagnostic], level: Level, stage: Stage) -> Vec<String> {
     d.iter()
         .filter(|x| x.level == level && x.stage == stage)
         .map(|x| x.message.clone())
@@ -304,8 +317,8 @@ fn consistency_flags_deviating_equipment_and_parameters() {
         ("M3", "pt"),
         ("M4", "extra"),
     ]));
-    let info = messages(&d, Level::Info, "consistency");
-    let warn = messages(&d, Level::Warning, "consistency");
+    let info = messages(&d, Level::Info, Stage::Consistency);
+    let warn = messages(&d, Level::Warning, Stage::Consistency);
     assert!(
         info.iter()
             .any(|m| m.contains("típico compartido por M1, M2, M3")),
@@ -354,7 +367,7 @@ fn circular_section_dependency_is_reported() {
             {"id":"a","type":"NOT","group":"A"},{"id":"b","type":"NOT","group":"B"}
         ],"links":[["a.OUT","b.IN"],["b.OUT","a.IN"]]}"#,
     );
-    let warn = messages(&d, Level::Warning, "partition");
+    let warn = messages(&d, Level::Warning, Stage::Partition);
     assert!(
         warn.iter().any(|m| m.contains("dependencia circular")),
         "{warn:?}"
@@ -394,7 +407,7 @@ fn block_more_connected_to_another_section_is_flagged() {
         ],"links":[["b1.OUT","a.IN1"],["b2.OUT","a.IN2"],["a.OUT","b3.IN"],
                    ["X","b1.IN"],["Y","b2.IN"],["b3.OUT","Z"]]}"#,
     );
-    let warn = messages(&d, Level::Warning, "partition");
+    let warn = messages(&d, Level::Warning, Stage::Partition);
     assert!(
         warn.iter()
             .any(|m| m.starts_with("a está en A pero tiene 3 conexiones con B")),
@@ -417,7 +430,7 @@ fn network_comment_is_a_header_text_box_in_cells() {
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     let nets = normalize::networks(&sec);
-    let lay = layout::layout(&mut sec, &nets, &LayoutConfig::default(), &mut d).unwrap();
+    let lay = place(&mut sec, &nets, &mut d);
     assert_eq!(lay.texts.len(), 1);
     let t = &lay.texts[0];
     // Debajo de la primera red, encima del bloque comentado y sin pisarlo.
@@ -524,7 +537,7 @@ fn each_network_comment_gets_its_own_box() {
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     let nets = normalize::networks(&sec);
-    let lay = layout::layout(&mut sec, &nets, &LayoutConfig::default(), &mut d).unwrap();
+    let lay = place(&mut sec, &nets, &mut d);
     let t: Vec<(&str, i32, i32)> = lay
         .texts
         .iter()

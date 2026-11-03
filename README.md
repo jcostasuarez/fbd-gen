@@ -12,7 +12,9 @@ cargo run -- examples/planta_bombas.json
 
 No necesita Node, internet ni archivos externos: la librería de bloques de Control
 Expert 15.1 va incluida en el ejecutable (feature `embedded-library`, activo por
-defecto). `--lib` permite usar otra exportación de la librería. Para usar solo la
+defecto). `--lib` permite usar otra exportación de la librería; cada bloque se valida
+con las mismas reglas que un bloque propio (nombres IEC, pines sin repetir ni superponer,
+tipo EF/EFB/DFB) y un nombre repetido es un error. Para usar solo la
 librería desde otro crate:
 
 ```toml
@@ -78,8 +80,14 @@ Cada link es `[origen, destino]`; un extremo es `bloque.PIN`, un literal IEC o u
 El nombre del programa, los ids de bloque y las instancias son identificadores IEC
 (letra o `_`, después letras, dígitos o `_`; sin caracteres extendidos). Las variables
 admiten además campos (`Motor.Run`), índices (`Tab[3]`) y direcciones (`%MW100`). Un
+campo o un índice declara su raíz, que tiene que estar en `variables` (su tipo no se
+puede deducir) o ser una instancia de bloque (`T1.ET`); una dirección no se declara. Los
+ids de bloque no distinguen mayúsculas, y una variable no puede llamarse como una instancia
+ni, si está declarada, como un id de bloque (`Motor.Run` sería ambiguo). Un
 nombre inválido, un grafo sin bloques o más entradas extensibles que el máximo del
 bloque son errores de validación, antes de ejecutar el layout.
+Un campo desconocido (`instace`, `partiton`...) es un error al leer el JSON: un
+typo nunca se ignora en silencio.
 
 `variables` es opcional: lo que no se declara se tipa por inferencia (`src/types.rs`), y
 una variable sin tipo deducible es un error.
@@ -108,6 +116,9 @@ Los literales tipados (`REAL#1.5`, `DINT#3`, `WORD#16#FF`, `T#5s`...) aportan su
 la inferencia. Las familias escalares `ANY_BIT`, `ANY_INT`, `ANY_REAL`, `ANY_NUM` y
 `ANY_ELEMENTARY` rechazan tipos incompatibles antes de generar XML. Las familias de
 arrays, referencias e IODDT todavía requieren validación en Control Expert.
+Dos tipos elementales distintos unidos por un cable o una variable (`BOOL` y `TIME`,
+`INT` y `DINT`) son un error; `EBOOL` y `BOOL` son compatibles. Entre tipos derivados
+(arrays, DDT) la diferencia es un aviso, porque puede tratarse de un alias.
 
 `--max-fanout` es un umbral de simplificación. Las redes se ordenan para que la fuente
 de una variable creada por fan-out se ejecute antes que sus destinos, aunque estos se
@@ -120,15 +131,18 @@ intencionales de realimentación conservan su lectura del scan anterior.
 | Etapa | Módulo |
 |---|---|
 | 1. Validación contra la librería | `resolve.rs` |
-| 2. Consistencia entre equipos (hash Weisfeiler-Lehman) | `consistency.rs` |
-| 3. Partición: equipo, etapa, tamaño; chequeo de cohesión | `partition.rs` |
-| 4. Orden de secciones por dependencias; ciclos reportados | `partition.rs` |
-| 5. Normalización: cable o variable (realimentación, fan-out) | `normalize.rs` |
-| 6. Redes (componentes conexos, dependencias de fan-out, desempate por orden del modelo) con comentario de red | `normalize.rs`, `layout.rs` |
-| 7. Sugiyama por red y permutación de entradas conmutativas | `sugiyama/`, `layout.rs` |
-| 8. Grilla, apilado de redes y validación de la geometría | `layout.rs` |
-| Inferencia de tipos de variables | `types.rs` |
+| 2. Inferencia de tipos, una sola vez sobre todo el programa (cada pin queda con su tipo) | `types.rs` |
+| 3. Consistencia entre equipos (hash Weisfeiler-Lehman) | `consistency.rs` |
+| 4. Partición: equipo, etapa, tamaño; chequeo de cohesión. Produce subgrafos ya resueltos y tipados, con los cables entre secciones convertidos en variables | `partition.rs` |
+| 5. Orden de secciones por dependencias; ciclos reportados | `partition.rs` |
+| 6. Normalización: cable o variable (realimentación, fan-out) | `normalize.rs` |
+| 7. Redes (componentes conexos, dependencias de fan-out, desempate por orden del modelo) con comentario de red | `normalize.rs`, `layout.rs` |
+| 8. Sugiyama por red y permutación de entradas conmutativas | `sugiyama/`, `layout.rs` |
+| 9. Grilla, apilado de redes y validación de la geometría | `layout.rs` |
 | Export a XML de intercambio FBD | `xef.rs` |
+
+Las etapas 6 a 9 y el export son comunes a `generate_program`, `generate_section` y
+`generate_function`; una sección nunca se vuelve a validar ni a tipar.
 
 ## Motor de layout
 

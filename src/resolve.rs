@@ -1,12 +1,13 @@
 //! Etapa 1: resolución del grafo semántico contra la librería y validación
 //! (tipos de bloque, pines, sentidos, conductores múltiples, tipos de dato).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use crate::iec::{is_identifier, is_literal, is_variable_ref, var_root};
 use crate::library::{BlockDef, Library};
 use crate::model::*;
 
-const STAGE: &str = "validate";
+const STAGE: Stage = Stage::Validate;
 
 pub enum Endpoint {
     Pin { block: usize, pin: String },
@@ -14,32 +15,10 @@ pub enum Endpoint {
     Lit(String),
 }
 
-/// Literales IEC 61131-3: booleanos, numéricos, tipados (`T#5s`, `16#FF`, `INT#3`) y strings.
-pub fn is_literal(s: &str) -> bool {
-    let s = s.trim();
-    if s.eq_ignore_ascii_case("TRUE") || s.eq_ignore_ascii_case("FALSE") {
-        return true;
-    }
-    if s.starts_with('\'') || s.starts_with('"') {
-        return true;
-    }
-    if let Some((prefix, _)) = s.split_once('#') {
-        return !prefix.is_empty()
-            && prefix
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_');
-    }
-    let body = s.strip_prefix(['-', '+']).unwrap_or(s);
-    body.starts_with(|c: char| c.is_ascii_digit())
-        && body
-            .chars()
-            .all(|c| c.is_ascii_digit() || matches!(c, '_' | '.' | 'e' | 'E' | '-' | '+'))
-}
-
-pub fn parse_endpoint(s: &str, ids: &HashMap<&str, usize>) -> Endpoint {
+pub fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
     let s = s.trim();
     if let Some((id, pin)) = s.split_once('.')
-        && let Some(&block) = ids.get(id)
+        && let Some(&block) = ids.get(&id.to_ascii_uppercase())
     {
         return Endpoint::Pin {
             block,
@@ -66,14 +45,7 @@ fn extensible_count(
         .find_map(|(i, p)| p.extensible.as_ref().map(|e| (i, e)))?;
     let max_ref = referenced
         .iter()
-        .filter_map(|name| {
-            let rest = name.get(ext.prefix.len()..)?;
-            if !name[..ext.prefix.len()].eq_ignore_ascii_case(&ext.prefix) {
-                return None;
-            }
-            let n: u32 = rest.parse().ok()?;
-            n.checked_sub(ext.first_index).map(|k| k + 1)
-        })
+        .filter_map(|name| ext.index_of(name).map(|k| k + 1))
         .max()
         .unwrap_or(0);
     Some((idx, explicit.unwrap_or(0).max(max_ref).max(ext.min)))
@@ -111,6 +83,7 @@ fn build_block(
             permutable,
             param_in: None,
             param_out: None,
+            inferred: None,
         });
     };
     for (i, p) in def.inputs.iter().enumerate() {
@@ -163,10 +136,6 @@ fn build_block(
     }
 }
 
-fn is_generic(ty: &str) -> bool {
-    ty.to_ascii_uppercase().starts_with("ANY")
-}
-
 pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Option<Section> {
     // El nombre termina en la sección de Control Expert y en los archivos de salida.
     if !is_identifier(&spec.name) {
@@ -208,7 +177,7 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 format!("{}: nombre de instancia inválido \"{inst}\"", b.id),
             );
         }
-        if ids.insert(b.id.as_str(), i).is_some() {
+        if ids.insert(b.id.to_ascii_uppercase(), i).is_some() {
             diags.push(
                 Level::Error,
                 STAGE,
@@ -264,9 +233,40 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
         }
     }
 
+    // Nombres de variables: una variable simple no puede llamarse como una instancia
+    // (Control Expert declararía las dos) y una declarada no puede llamarse como un id
+    // de bloque (`Motor.Run` sería ambiguo entre un pin y un campo). Un acceso a una
+    // instancia (`T1.ET`) sí es válido.
+    let mut reported = HashSet::new();
+    let declared = spec.variables.iter().map(|v| (v.name.as_str(), true));
+    let used = links
+        .iter()
+        .flat_map(|(a, b, ..)| [a, b])
+        .filter_map(|e| match e {
+            Endpoint::Var(v) => Some((v.as_str(), false)),
+            _ => None,
+        });
+    for (name, is_declared) in declared.chain(used) {
+        let Some(root) = var_root(name) else { continue };
+        let key = root.to_ascii_uppercase();
+        let message = if let Some(owner) = instances.get(&key).filter(|_| root == name) {
+            format!("variable {name}: ya es el nombre de la instancia de {owner}")
+        } else if let Some(&b) = ids.get(&key).filter(|_| is_declared) {
+            format!(
+                "variable {name}: hay un bloque con id {}; `{}.X` sería ambiguo",
+                spec.blocks[b].id, spec.blocks[b].id
+            )
+        } else {
+            continue;
+        };
+        if reported.insert(key) {
+            diags.push(Level::Error, STAGE, message);
+        }
+    }
+
     let mut comments = Vec::new();
     for c in &spec.comments {
-        match ids.get(c.at.as_str()) {
+        match ids.get(&c.at.to_ascii_uppercase()) {
             Some(&b) => comments.push((b, c.text.clone())),
             None => diags.push(
                 Level::Error,
@@ -362,14 +362,7 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 if !claim_input(&section, to, diags) {
                     continue;
                 }
-                let (tf, tt) = (&section.pin(from).ty, &section.pin(to).ty);
-                if !is_generic(tf) && !is_generic(tt) && !tf.eq_ignore_ascii_case(tt) {
-                    diags.push(
-                        Level::Warning,
-                        STAGE,
-                        format!("{link}: tipos distintos {tf} -> {tt}"),
-                    );
-                }
+                // La compatibilidad de tipos la valida la inferencia (types.rs).
                 section.wires.push(Wire { from, to });
             }
             (None, Some(to)) => {
