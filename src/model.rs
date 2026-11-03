@@ -367,6 +367,23 @@ pub enum Level {
     Info,
 }
 
+impl Level {
+    /// Nombre en minúsculas, igual que al serializar.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Level::Error => "error",
+            Level::Warning => "warning",
+            Level::Info => "info",
+        }
+    }
+}
+
+impl std::fmt::Display for Level {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Etapa del pipeline que emitió un diagnóstico. Se serializa en minúsculas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -415,6 +432,13 @@ pub struct Diagnostic {
     pub stage: Stage,
     /// Texto para el usuario.
     pub message: String,
+}
+
+/// `[warning] normalize: ...`: gravedad, etapa y mensaje.
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}: {}", self.level, self.stage, self.message)
+    }
 }
 
 #[derive(Debug, Default)]

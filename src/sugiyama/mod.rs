@@ -129,7 +129,19 @@ struct Segment {
     to_row: i32,
 }
 
-/// Los cables deben formar un grafo sin ciclos (la normalización corta los lazos).
+/// Ubica cada nodo y traza cada cable de una red en la grilla. Los cables deben formar
+/// un grafo sin ciclos (en fbd-gen, la normalización corta los lazos antes).
+///
+/// ```
+/// use fbd_gen::sugiyama::{layout, Edge, Node, Spacing};
+///
+/// let nodes = [Node { width: 6, height: 4 }, Node { width: 6, height: 4 }];
+/// let edges = [Edge { from: 0, from_row: 2, to: 1, to_row: 2 }];
+/// let placed = layout(&nodes, &edges, &Spacing { node: 2, layer: 3 })?;
+/// // El cable avanza de izquierda a derecha: el destino queda en una capa posterior.
+/// assert!(placed.nodes[1].x > placed.nodes[0].x + nodes[0].width);
+/// # Ok::<(), fbd_gen::sugiyama::LayoutError>(())
+/// ```
 ///
 /// # Errors
 ///

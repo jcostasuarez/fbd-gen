@@ -14,10 +14,15 @@ use crate::sugiyama::{self, MAX_EXTENT};
 
 const STAGE: Stage = Stage::Layout;
 
-/// Falla del layout: el motor no pudo dibujar la red o la grilla no pasó la validación.
-#[derive(Debug)]
-pub(crate) enum LayoutError {
+/// Por qué no se pudo dibujar una sección: el motor rechazó una red o el dibujo no pasó
+/// la validación de la grilla.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LayoutError {
+    /// El motor Sugiyama no pudo dibujar una red (ciclo, puertos inválidos, tamaño).
     Engine(sugiyama::LayoutError),
+    /// La sección excede [`MAX_EXTENT`] o el dibujo viola un invariante de la grilla
+    /// (bloques superpuestos, cables que se tocan). Esto último indicaría un bug del motor.
     Grid(String),
 }
 

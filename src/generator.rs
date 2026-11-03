@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::layout::LayoutError as SectionLayoutError;
 use crate::library::{BlockDef, Library, LibraryError};
 use crate::model::{
     self, BlockSpec, CommentSpec, Diagnostic, Diagnostics, Level, PartitionSpec, ProgramSpec,
@@ -219,7 +220,7 @@ pub enum GenerationError {
         /// Sección que no se pudo dibujar.
         section: String,
         /// Causa: un error del motor Sugiyama o una validación de la grilla.
-        source: Box<dyn Error + Send + Sync>,
+        source: SectionLayoutError,
     },
 }
 
@@ -254,7 +255,7 @@ impl Error for GenerationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Library(source) => Some(source),
-            Self::Layout { source, .. } => Some(source.as_ref()),
+            Self::Layout { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -362,6 +363,27 @@ impl Generator {
 
     /// Genera una sola sección. `group` y `stage` de los bloques son solo metadatos.
     ///
+    /// ```
+    /// use fbd_gen::{BlockSpec, Generator, LinkSpec, SectionSpec, VarSpec};
+    ///
+    /// let generator = Generator::from_library_file("efb_dimensions.json")?;
+    /// let mut spec = SectionSpec::new("Arranque");
+    /// // `AND` es genérico (ANY_BIT): las variables declaradas fijan el tipo.
+    /// for name in ["P101_Auto", "P101_Listo", "P101_Run"] {
+    ///     spec.variables.push(VarSpec::new(name, "BOOL"));
+    /// }
+    /// spec.blocks.push(BlockSpec::new("perm", "AND"));
+    /// spec.links = vec![
+    ///     LinkSpec::Pair("P101_Auto".into(), "perm.IN1".into()),
+    ///     LinkSpec::Pair("P101_Listo".into(), "perm.IN2".into()),
+    ///     LinkSpec::Pair("perm.OUT".into(), "P101_Run".into()),
+    /// ];
+    /// let section = generator.generate_section(&spec)?;
+    /// assert_eq!(section.layout.blocks.len(), 1);
+    /// assert!(section.xml.contains("AND"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// [`GenerationError::InvalidInput`] si el grafo es inválido y
@@ -455,7 +477,7 @@ fn render_section(
     let place = |section: &Section| {
         layout::layout(section, &nets, &cfg.layout).map_err(|source| GenerationError::Layout {
             section: section.name.clone(),
-            source: source.into(),
+            source,
         })
     };
     // Primera pasada; si las entradas conmutativas quedan cruzadas se reasignan según
@@ -530,26 +552,29 @@ pub(crate) fn generate_program_with(
         return Err(invalid(spec, diags));
     }
     let known = var_table(vars.into_iter().chain(part.link_vars));
-    let mut sections = Vec::new();
-    for section in part.sections {
-        let result = render_section(section, task(spec), &known, cfg, Diagnostics::default())
-            .map_err(|error| match error {
-                // El error de una sección se informa con el contexto del programa.
-                GenerationError::InvalidInput {
-                    scope,
-                    mut diagnostics,
-                } => {
-                    let mut all = diags.0.clone();
-                    all.append(&mut diagnostics);
-                    GenerationError::InvalidInput {
-                        scope,
-                        diagnostics: all,
-                    }
-                }
-                error => error,
-            })?;
-        sections.push(result);
-    }
+    // El error de una sección se informa con el contexto del programa.
+    let with_program_context = |error| match error {
+        GenerationError::InvalidInput {
+            scope,
+            mut diagnostics,
+        } => {
+            let mut all = diags.0.clone();
+            all.append(&mut diagnostics);
+            GenerationError::InvalidInput {
+                scope,
+                diagnostics: all,
+            }
+        }
+        error => error,
+    };
+    let sections = part
+        .sections
+        .into_iter()
+        .map(|section| {
+            render_section(section, task(spec), &known, cfg, Diagnostics::default())
+                .map_err(with_program_context)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(GeneratedProgram {
         name: spec.name.clone(),
         task: task(spec).to_string(),

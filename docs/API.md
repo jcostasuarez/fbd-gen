@@ -58,6 +58,7 @@ ejecución. Cada `GeneratedSection` contiene:
   de validación, tipos, consistencia y partición están una sola vez, en el programa.
   Cada `Diagnostic` tiene `level`, `stage` (`Stage::Validate`, `Types`, `Consistency`,
   `Partition`, `Normalize` o `Layout`, en minúsculas al serializar) y `message`.
+  `Diagnostic`, `Level` y `Stage` implementan `Display` (`[warning] normalize: ...`).
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
 - `file_name(ext)`: nombre de archivo que usa la CLI (`<sección>.xbd`, `.svg`, `.layout.json`).
@@ -76,11 +77,19 @@ Un resultado `Ok` no contiene secciones inválidas ni salidas opcionales. Los er
 | `InvalidInput { scope, diagnostics }` | Grafo inválido; incluye el ámbito y los diagnósticos |
 | `InvalidConfig { message }` | Opciones fuera de rango o inválidas |
 | `Library(LibraryError)` | Lectura o deserialización del catálogo base |
-| `Layout { section, source }` | El motor de layout no pudo dibujar la sección sin violar la grilla |
+| `Layout { section, source }` | No se pudo dibujar la sección; `source` es un `SectionLayoutError` |
+
+`SectionLayoutError::Engine` envuelve el `sugiyama::LayoutError` del motor (ciclo,
+puerto fuera de su nodo, red demasiado grande) y `SectionLayoutError::Grid` indica que
+la hoja excede `sugiyama::MAX_EXTENT` o que el dibujo violaría un invariante de la grilla.
+Los dos se pueden distinguir con `match` sin parsear el mensaje.
 
 `GenerationError::diagnostics()` da acceso a los diagnósticos de una entrada inválida.
 Los fallos operativos conservan su causa mediante `std::error::Error::source()`.
 Si falla una sección, `generate_program` devuelve `Err`; no publica un programa parcial.
+
+`fbd_gen::serde_json` re-exporta la versión de `serde_json` cuyo `Error` aparece en la
+API (`LibraryError::Json`, `layout_json`, `manifest_json`).
 
 ## DFB y funciones externas
 

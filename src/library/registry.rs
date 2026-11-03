@@ -65,6 +65,21 @@ impl Error for LibraryError {
 
 impl BlockDef {
     /// Define la interfaz y geometría de una DFB; no contiene su implementación IEC.
+    /// `width` va en celdas de grilla; los pines se agregan con [`BlockDef::input`],
+    /// [`BlockDef::output`] y [`BlockDef::in_out`].
+    ///
+    /// ```
+    /// use fbd_gen::{BlockDefinition, Library};
+    ///
+    /// let mut library = Library::default();
+    /// library.register(
+    ///     BlockDefinition::dfb("MotorPropio", 12)
+    ///         .input("Enable", "BOOL", 1)
+    ///         .output("Running", "BOOL", 1),
+    /// )?;
+    /// assert!(library.get("motorpropio").is_some());
+    /// # Ok::<(), fbd_gen::LibraryError>(())
+    /// ```
     pub fn dfb(name: impl Into<String>, width: u32) -> Self {
         Self {
             name: name.into(),

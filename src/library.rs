@@ -48,6 +48,14 @@ pub struct Extensible {
 
 impl Extensible {
     /// Nombre del pin `k` (desde 0) de la extensión: `IN` y 1 dan `IN1`, `IN2`...
+    ///
+    /// ```
+    /// use fbd_gen::ExtensiblePin;
+    ///
+    /// let ext = ExtensiblePin { min: 2, max: 32, prefix: "IN".into(), first_index: 1 };
+    /// assert_eq!(ext.pin_name(2), "IN3");
+    /// assert_eq!(ext.index_of("in3"), Some(2));
+    /// ```
     pub fn pin_name(&self, k: u32) -> String {
         format!("{}{}", self.prefix, self.first_index + k)
     }

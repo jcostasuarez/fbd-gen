@@ -104,6 +104,20 @@ impl Generator {
     /// Genera una llamada a un bloque ya conocido. No crea su implementación ni lo
     /// registra: las DFB propias deben incorporarse antes con `register_block`.
     ///
+    /// ```
+    /// use fbd_gen::{FunctionCallSpec, Generator};
+    ///
+    /// let generator = Generator::from_library_file("efb_dimensions.json")?;
+    /// let call = FunctionCallSpec::new("P101_Retardo", "TON")
+    ///     .with_instance("P101_Timer")
+    ///     .input("IN", "P101_Start")
+    ///     .input("PT", "T#3s")
+    ///     .output("Q", "P101_Run");
+    /// let section = generator.generate_function(&call)?;
+    /// assert!(section.variables.iter().any(|v| v.name == "P101_Timer" && v.ty == "TON"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// [`GenerationError::InvalidInput`] si `function` no está en el catálogo, si un pin
