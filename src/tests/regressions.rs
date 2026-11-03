@@ -592,3 +592,137 @@ fn block_ids_are_case_insensitive_and_names_cannot_collide() {
         .collect();
     assert_eq!(names, ["X", "Y"]);
 }
+
+#[test]
+fn sheet_beyond_the_extent_cap_is_a_layout_error() {
+    // Con 1 carácter cada 10 celdas el comentario ocupa unas 10 filas por cada carácter
+    // que no entra en el ancho de la red: pasa el tope de la hoja sin una red enorme.
+    let generator = Generator::new(lib().clone())
+        .with_config(GeneratorConfig {
+            layout: LayoutConfig {
+                text_chars_per_10_cells: 1,
+                ..LayoutConfig::default()
+            },
+            ..GeneratorConfig::default()
+        })
+        .unwrap();
+    let mut s = spec(
+        r#"{"name":"P","blocks":[{"id":"n","type":"NOT"}],
+            "links":[["BOOL#TRUE","n.IN"]]}"#,
+    );
+    s.comments = vec![CommentSpec {
+        at: "n".into(),
+        text: "x".repeat(2 * crate::sugiyama::MAX_EXTENT as usize),
+    }];
+    match generator.generate_program(&s) {
+        Err(crate::GenerationError::Layout { source, .. }) => {
+            assert!(source.to_string().contains("excede"), "{source}")
+        }
+        Err(other) => panic!("se esperaba un error de layout: {other}"),
+        Ok(result) => panic!(
+            "se esperaba un error de layout, salió una hoja de {} filas",
+            result.sections[0].layout.height
+        ),
+    }
+}
+
+#[test]
+fn control_characters_in_xml_texts_are_validation_errors() {
+    let s = spec(
+        r#"{"name":"P",
+            "variables":[{"name":"V","type":"BOOL","init":"FALSE\u0002","comment":"a\u0001b",
+                          "address":"%M1\u001b"}],
+            "blocks":[{"id":"n","type":"NOT","comment":"x\u0000y"},
+                      {"id":"m","type":"CONCAT_STR"}],
+            "links":[["TRUE","n.IN"],["n.OUT","V"],
+                     ["'a\u0007b'","m.IN1"],["'c'","m.IN2"],["m.OUT","Texto"]],
+            "comments":[{"at":"n","text":"c\u0008d"}]}"#,
+    );
+    let error = generator().generate_program(&s).unwrap_err();
+    let bad: Vec<&str> = error
+        .diagnostics()
+        .iter()
+        .filter(|d| d.level == Level::Error && d.message.contains("no admitido en XML"))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(bad.len(), 6, "{bad:#?}");
+    for expected in ["U+0002", "U+0001", "U+001B", "U+0000", "U+0007", "U+0008"] {
+        assert!(
+            bad.iter().any(|m| m.contains(expected)),
+            "{expected}: {bad:#?}"
+        );
+    }
+
+    // Tabulación y saltos de línea sí son texto XML válido.
+    let ok = spec(
+        r#"{"name":"P","blocks":[{"id":"n","type":"NOT","comment":"línea 1\nlínea 2\tfin"}],
+            "links":[["BOOL#TRUE","n.IN"]],
+            "comments":[{"at":"n","text":"Arranque\r\nP101"}]}"#,
+    );
+    generator().generate_program(&ok).unwrap();
+}
+
+fn errors(json: &str) -> Vec<String> {
+    match generator().generate_program(&spec(json)) {
+        Ok(_) => Vec::new(),
+        Err(e) => e
+            .diagnostics()
+            .iter()
+            .filter(|d| d.level == Level::Error)
+            .map(|d| d.message.clone())
+            .collect(),
+    }
+}
+
+#[test]
+fn task_must_be_a_control_expert_task_and_is_exported_in_canonical_form() {
+    let program = |task: &str| {
+        format!(
+            r#"{{"name":"P","task":"{task}","blocks":[{{"id":"n","type":"NOT"}}],
+                "links":[["BOOL#TRUE","n.IN"]]}}"#
+        )
+    };
+    for bad in ["NO EXISTE <x>", "AUX4", "EVT0", ""] {
+        let errs = errors(&program(bad));
+        assert!(errs.iter().any(|m| m.contains("tarea")), "{bad}: {errs:?}");
+    }
+    let result = generator()
+        .generate_program(&spec(&program("aux1")))
+        .unwrap();
+    assert_eq!(result.task, "AUX1");
+    assert!(result.sections[0].xml.contains(r#"task="AUX1""#));
+}
+
+#[test]
+fn initial_values_and_addresses_are_validated_before_export() {
+    let program = |var: &str| {
+        format!(
+            r#"{{"name":"P","variables":[{var}],"blocks":[{{"id":"n","type":"NOT"}}],
+                "links":[["V","n.IN"],["n.OUT","Q"]]}}"#
+        )
+    };
+    for (var, expected) in [
+        (
+            r#"{"name":"V","type":"BOOL","init":"hola mundo"}"#,
+            "no es un literal",
+        ),
+        (r#"{"name":"V","type":"WORD","init":"T#5s"}"#, "es TIME"),
+        (r#"{"name":"V","type":"WORD","init":"INT#3"}"#, "es INT"),
+        (
+            r#"{"name":"V","type":"WORD","address":"MW100"}"#,
+            "dirección topológica",
+        ),
+    ] {
+        let errs = errors(&program(var));
+        assert!(errs.iter().any(|m| m.contains(expected)), "{var}: {errs:?}");
+    }
+    // Literales sin prefijo, bases y alias compatibles siguen siendo válidos.
+    for var in [
+        r#"{"name":"V","type":"WORD","init":"16#FF","address":"%MW100"}"#,
+        r#"{"name":"V","type":"WORD","init":"WORD#2#1010"}"#,
+        r#"{"name":"V","type":"BOOL","init":"TRUE"}"#,
+        r#"{"name":"V","type":"EBOOL","init":"BOOL#FALSE","address":"%M1"}"#,
+    ] {
+        assert_eq!(errors(&program(var)), Vec::<String>::new(), "{var}");
+    }
+}

@@ -38,6 +38,7 @@ mod resolve;
 pub mod sugiyama;
 mod types;
 mod xef;
+mod xml;
 
 #[cfg(test)]
 mod tests;

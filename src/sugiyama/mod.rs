@@ -22,6 +22,11 @@ use std::fmt;
 use routing::{Route, Trunk};
 use simplex::Arc;
 
+/// Extensión máxima de un dibujo por eje, en celdas. Con este tope las cuentas en `i32`
+/// del motor (y de quien escale las coordenadas, como una vista previa en píxeles) no
+/// desbordan; una red más grande es [`LayoutError::TooLarge`].
+pub const MAX_EXTENT: i32 = 1 << 24;
+
 /// Celda de la grilla: columna `x`, fila `y`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Pos {
@@ -72,6 +77,8 @@ pub enum LayoutError {
     Cycle,
     /// Las restricciones de posición vertical no tienen solución.
     Infeasible,
+    /// Un nodo tiene medidas negativas, o el dibujo podría exceder [`MAX_EXTENT`].
+    TooLarge,
 }
 
 impl fmt::Display for LayoutError {
@@ -80,6 +87,7 @@ impl fmt::Display for LayoutError {
             Self::PortOutOfNode { edge } => write!(f, "cable {edge}: puerto fuera de su nodo"),
             Self::Cycle => write!(f, "los cables forman un ciclo"),
             Self::Infeasible => write!(f, "restricciones de posición vertical inconsistentes"),
+            Self::TooLarge => write!(f, "la red excede {MAX_EXTENT} celdas por eje"),
         }
     }
 }
@@ -109,6 +117,9 @@ struct Segment {
 
 /// Los cables deben formar un grafo sin ciclos (la normalización corta los lazos).
 pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Placement> {
+    if nodes.iter().any(|n| n.width < 0 || n.height < 1) {
+        return Err(LayoutError::TooLarge);
+    }
     for (i, e) in edges.iter().enumerate() {
         let ok = |v: usize, row: i32| v < nodes.len() && (0..nodes[v].height).contains(&row);
         if !ok(e.from, e.from_row) || !ok(e.to, e.to_row) {
@@ -116,11 +127,52 @@ pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Place
         }
     }
     let (vertices, segments) = split_long_edges(nodes, edges)?;
+    check_extent(&vertices, &segments, spacing)?;
     let layers = order_layers(&vertices, &segments);
     let ys = place_vertically(&vertices, &segments, &layers, spacing)?;
     Ok(route(
         nodes, edges, &vertices, &segments, &layers, &ys, spacing,
     ))
+}
+
+/// Cota superior del dibujo, antes de posicionar: si entra en [`MAX_EXTENT`], ninguna
+/// cuenta posterior desborda.
+///
+/// - Vertical: el network simplex deja ajustado un árbol de expansión del grafo auxiliar
+///   (vértices más un nodo por tramo), así que dos rangos difieren a lo sumo en
+///   `nodos × δ máximo`, y δ está acotado por el alto de un vértice más la separación. Las
+///   filas de unión de un tronco partido pueden salir del rango, una fila por extremo
+///   ocupado como mucho.
+/// - Horizontal: el ancho de cada capa más su canal, que usa a lo sumo dos columnas por
+///   tramo.
+fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: &Spacing) -> Result<()> {
+    let (v, s) = (vertices.len() as i64, segments.len() as i64);
+    let node_gap = i64::from(spacing.node).abs().max(1);
+    let layer_gap = i64::from(spacing.layer).abs();
+    let delta = vertices
+        .iter()
+        .map(|x| i64::from(x.height))
+        .max()
+        .unwrap_or(0)
+        + node_gap
+        + 1;
+    let layers = vertices
+        .iter()
+        .map(|x| x.layer as i64 + 1)
+        .max()
+        .unwrap_or(0);
+    let widths: i64 = vertices.iter().map(|x| i64::from(x.width)).sum();
+    let height = (v + s)
+        .saturating_mul(delta)
+        .saturating_mul(2)
+        .saturating_add(4 * s + 2);
+    let width = widths
+        .saturating_add(layers.saturating_mul(layer_gap + 2))
+        .saturating_add(2 * s);
+    if height.max(width) > i64::from(MAX_EXTENT) {
+        return Err(LayoutError::TooLarge);
+    }
+    Ok(())
 }
 
 /// Etapas 1 y 2: capas por network simplex y nodos ficticios.

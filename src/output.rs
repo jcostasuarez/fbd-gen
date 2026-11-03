@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::layout::Layout;
 use crate::model::*;
+use crate::xml::escape as esc;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,12 +126,6 @@ pub fn to_output(section: &Section, nets: &[Vec<usize>], layout: &Layout) -> Out
 }
 
 const C: i32 = 12; // píxeles por celda en la vista previa
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
 
 pub fn to_svg(section: &Section, layout: &Layout) -> String {
     let margin = 2 * C;

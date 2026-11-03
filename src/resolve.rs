@@ -3,9 +3,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::iec::{is_identifier, is_literal, is_variable_ref, var_root};
+use crate::iec::{is_address, is_identifier, is_literal, is_variable_ref, task_name, var_root};
 use crate::library::{BlockDef, Library};
 use crate::model::*;
+use crate::xml;
 
 const STAGE: Stage = Stage::Validate;
 
@@ -136,6 +137,48 @@ fn build_block(
     }
 }
 
+/// Textos libres que terminan en el XML. Un caracter que XML 1.0 no admite (los de
+/// control, salvo tabulación y saltos de línea) produciría un `.xbd` mal formado, que
+/// Control Expert no puede importar. Los nombres ya se validan como identificadores.
+fn check_xml_texts(spec: &ProgramSpec, diags: &mut Diagnostics) {
+    let mut check = |what: &dyn Fn() -> String, text: &str| {
+        if let Some(c) = xml::invalid_char(text) {
+            diags.push(
+                Level::Error,
+                STAGE,
+                format!("{}: caracter U+{:04X} no admitido en XML", what(), c as u32),
+            );
+        }
+    };
+    for v in &spec.variables {
+        let fields = [
+            ("tipo", Some(&v.ty)),
+            ("dirección", v.address.as_ref()),
+            ("comentario", v.comment.as_ref()),
+            ("valor inicial", v.init.as_ref()),
+        ];
+        for (field, text) in fields {
+            if let Some(text) = text {
+                check(&|| format!("variable {}: {field}", v.name), text);
+            }
+        }
+    }
+    for b in &spec.blocks {
+        if let Some(text) = &b.comment {
+            check(&|| format!("{}: comentario", b.id), text);
+        }
+    }
+    for c in &spec.comments {
+        check(&|| format!("comentario de la red de {}", c.at), &c.text);
+    }
+    for (i, l) in spec.links.iter().enumerate() {
+        let (a, b) = l.ends();
+        for end in [a, b] {
+            check(&|| format!("link {i}"), end);
+        }
+    }
+}
+
 pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Option<Section> {
     // El nombre termina en la sección de Control Expert y en los archivos de salida.
     if !is_identifier(&spec.name) {
@@ -151,6 +194,16 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
     if spec.blocks.is_empty() {
         diags.push(Level::Error, STAGE, "el grafo no tiene bloques");
     }
+    if task_name(&spec.task).is_none() {
+        diags.push(
+            Level::Error,
+            STAGE,
+            format!(
+                "tarea \"{}\" inválida: MAST, FAST, AUX0 a AUX3 o SAFE",
+                spec.task
+            ),
+        );
+    }
     for v in &spec.variables {
         if !is_variable_ref(&v.name) {
             diags.push(
@@ -159,7 +212,18 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 format!("variable declarada con nombre inválido: \"{}\"", v.name),
             );
         }
+        if let Some(address) = v.address.as_ref().filter(|a| !is_address(a)) {
+            diags.push(
+                Level::Error,
+                STAGE,
+                format!(
+                    "variable {}: \"{address}\" no es una dirección topológica (%MW100, %I0.1.2...)",
+                    v.name
+                ),
+            );
+        }
     }
+    check_xml_texts(spec, diags);
     let mut ids = HashMap::new();
     for (i, b) in spec.blocks.iter().enumerate() {
         // Un punto en el id lo confundiría con `bloque.PIN` en los links.

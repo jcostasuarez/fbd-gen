@@ -9,8 +9,8 @@ use std::error::Error;
 use std::fmt;
 
 use crate::model::*;
-use crate::sugiyama;
 pub use crate::sugiyama::Pos;
+use crate::sugiyama::{self, MAX_EXTENT};
 
 const STAGE: Stage = Stage::Layout;
 
@@ -137,17 +137,34 @@ impl Margins {
     }
 }
 
+/// Cuenta en `u64` llevada a `i32`, topeada justo arriba de `MAX_EXTENT`: un texto
+/// gigante da una medida que el chequeo de extensión rechaza, nunca un desborde.
+fn cells(n: u64) -> i32 {
+    i32::try_from(n.min(MAX_EXTENT as u64 + 1)).unwrap_or(MAX_EXTENT)
+}
+
 fn label_cells(text: &str, cfg: &LayoutConfig) -> i32 {
-    let chars = text.chars().count() as u32;
-    (chars * cfg.label_cells_per_10_chars).div_ceil(10) as i32 + 1
+    let chars = text.chars().count() as u64;
+    cells((chars * u64::from(cfg.label_cells_per_10_chars)).div_ceil(10) + 1)
 }
 
 /// Filas que ocupa un comentario de `width` celdas.
 fn text_lines(text: &str, width: i32, cfg: &LayoutConfig) -> i32 {
-    let chars = text.chars().count() as u32;
-    (chars * 10)
-        .div_ceil(width as u32 * cfg.text_chars_per_10_cells)
-        .max(1) as i32
+    let chars = text.chars().count() as u64;
+    let per_10 = width.max(1) as u64 * u64::from(cfg.text_chars_per_10_cells);
+    cells((chars * 10).div_ceil(per_10).max(1))
+}
+
+/// Corta el apilado en cuanto la hoja pasa `MAX_EXTENT`. Cada red ya viene acotada por el
+/// motor, así que las sumas hasta el próximo chequeo entran en `i32`.
+fn check_extent(section: &Section, extent: i32) -> Result<()> {
+    if extent > MAX_EXTENT {
+        bail!(
+            "{}: la sección excede {MAX_EXTENT} celdas por eje",
+            section.name
+        );
+    }
+    Ok(())
 }
 
 /// Celda del pin sobre el borde del bloque: la columna de salida o la de entrada.
@@ -247,6 +264,7 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
             });
             layout.width = layout.width.max(margin + width);
             cursor_y += lines + 2;
+            check_extent(section, cursor_y)?;
         }
         let (dx, dy) = (margin - min_x, cursor_y - min_y);
 
@@ -273,9 +291,11 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
         }
         layout.networks.push((top, bottom - top));
         cursor_y = bottom + cfg.network_gap as i32;
+        check_extent(section, cursor_y.max(layout.width))?;
     }
     layout.width += margin;
     layout.height = cursor_y - cfg.network_gap as i32 + margin;
+    check_extent(section, layout.width.max(layout.height))?;
     check(section, &layout, &margins)?;
     Ok(layout)
 }

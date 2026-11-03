@@ -8,6 +8,11 @@ use serde::Deserialize;
 use super::{BlockDef, Kind, Library, PinDef};
 use crate::iec::is_identifier as identifier;
 
+/// Tope del ancho de un bloque y de la última fila de sus pines, en celdas. La librería
+/// de Control Expert 15.1 llega a 20 de ancho y a la posición 34: el tope solo descarta
+/// definiciones absurdas, que harían desbordar las cuentas enteras del layout.
+pub const MAX_BLOCK_CELLS: u32 = 1000;
+
 /// Errores de lectura y registro del catálogo, sin reemplazos implícitos.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -104,8 +109,11 @@ fn validate(def: &BlockDef) -> Result<(), LibraryError> {
     if !identifier(&def.name) {
         return Err(bad("nombre IEC inválido".into()));
     }
-    if !(2..=i32::MAX as u32).contains(&def.width) {
-        return Err(bad("ancho fuera de rango".into()));
+    if !(2..=MAX_BLOCK_CELLS).contains(&def.width) {
+        return Err(bad(format!(
+            "ancho {} fuera de rango (2 a {MAX_BLOCK_CELLS})",
+            def.width
+        )));
     }
     if def.kind != Kind::Ef && def.typed_variant_of.is_some() {
         return Err(bad("solo una EF puede ser una variante tipada".into()));
@@ -121,8 +129,11 @@ fn validate(def: &BlockDef) -> Result<(), LibraryError> {
                     pin.name
                 )));
             }
-            if pin.ty.trim().is_empty() {
-                return Err(bad(format!("{}: tipo vacío", pin.name)));
+            if pin.ty.trim().is_empty() || pin.ty.chars().any(char::is_control) {
+                return Err(bad(format!(
+                    "{}: tipo vacío o con caracteres de control",
+                    pin.name
+                )));
             }
             let mut count = 1;
             if let Some(ext) = &pin.extensible {
@@ -145,9 +156,13 @@ fn validate(def: &BlockDef) -> Result<(), LibraryError> {
             if let Some(start) = pin.position {
                 let end = start
                     .checked_add(count - 1)
-                    .filter(|&n| n <= i32::MAX as u32 - 4);
+                    .filter(|&n| n <= MAX_BLOCK_CELLS - 4);
                 let Some(end) = end.filter(|_| start > 0) else {
-                    return Err(bad(format!("{}: posición fuera de rango", pin.name)));
+                    return Err(bad(format!(
+                        "{}: posición fuera de rango (1 a {})",
+                        pin.name,
+                        MAX_BLOCK_CELLS - 4
+                    )));
                 };
                 for (i, occupied) in rows.iter_mut().enumerate() {
                     if side == i || side == 2 {

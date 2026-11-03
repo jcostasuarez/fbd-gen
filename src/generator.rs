@@ -323,6 +323,12 @@ fn invalid(spec: &ProgramSpec, diags: Diagnostics) -> GenerationError {
     }
 }
 
+/// Tarea en su forma canónica (`mast` -> `MAST`). Una tarea desconocida ya es un error
+/// de `resolve`, que corta antes de exportar.
+fn task(spec: &ProgramSpec) -> &str {
+    crate::iec::task_name(&spec.task).unwrap_or(&spec.task)
+}
+
 /// Variables conocidas por nombre (sin distinguir mayúsculas).
 type VarTable = HashMap<String, TypedVar>;
 
@@ -417,7 +423,7 @@ pub(crate) fn generate_section_with(
     else {
         return Err(invalid(spec, diags));
     };
-    render_section(section, &spec.task, &var_table(vars), cfg, diags)
+    render_section(section, task(spec), &var_table(vars), cfg, diags)
 }
 
 pub(crate) fn generate_program_with(
@@ -442,7 +448,7 @@ pub(crate) fn generate_program_with(
     let known = var_table(vars.into_iter().chain(part.link_vars));
     let mut sections = Vec::new();
     for section in part.sections {
-        let result = render_section(section, &spec.task, &known, cfg, Diagnostics::default())
+        let result = render_section(section, task(spec), &known, cfg, Diagnostics::default())
             .map_err(|error| match error {
                 // El error de una sección se informa con el contexto del programa.
                 GenerationError::InvalidInput {
@@ -462,7 +468,7 @@ pub(crate) fn generate_program_with(
     }
     Ok(GeneratedProgram {
         name: spec.name.clone(),
-        task: spec.task.clone(),
+        task: task(spec).to_string(),
         diagnostics: diags.0,
         sections,
     })

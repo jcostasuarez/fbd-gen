@@ -13,6 +13,7 @@ use std::fmt::Write as _;
 use crate::layout::Layout;
 use crate::model::*;
 use crate::types::TypedVar;
+use crate::xml::escape as esc;
 
 /// Fecha fija de la cabecera: la importación no la usa y una fecha real haría que la
 /// misma entrada genere archivos distintos (las pruebas comparan la salida byte a byte).
@@ -22,14 +23,6 @@ const HEADER_DATE_TIME: &str = "date_and_time#2026-1-1-0:0:0";
 /// round-trip en Control Expert 15.1 (ver README). Aunque el archivo es una sección, no
 /// se probó otro valor: cambiarlo requiere repetir esa verificación.
 const HEADER_CONTENT: &str = "Derived Function Block source file";
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
 
 /// Nombre con el que el XML identifica cada bloque: la instancia de EFB/DFB o `.N` para EF.
 pub fn object_names(section: &Section) -> Vec<String> {

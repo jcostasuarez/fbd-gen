@@ -67,6 +67,21 @@ pub fn is_literal(s: &str) -> bool {
             .all(|c| c.is_ascii_digit() || matches!(c, '_' | '.' | 'e' | 'E' | '-' | '+'))
 }
 
+/// Tareas de Control Expert que admiten secciones FBD: la maestra, la rápida, las
+/// auxiliares y la de seguridad (M580 Safety). Las secciones de evento no se importan
+/// con una tarea.
+const TASKS: [&str; 7] = ["MAST", "FAST", "AUX0", "AUX1", "AUX2", "AUX3", "SAFE"];
+
+/// Nombre canónico (en mayúsculas) de una tarea, sin distinguir mayúsculas en la entrada.
+pub fn task_name(task: &str) -> Option<&'static str> {
+    TASKS.into_iter().find(|t| t.eq_ignore_ascii_case(task))
+}
+
+/// Dirección topológica (`%MW100`, `%I0.1.2`).
+pub fn is_address(s: &str) -> bool {
+    s.starts_with('%') && is_variable_ref(s)
+}
+
 /// Identificador válido a partir de un texto arbitrario.
 pub fn sanitize(s: &str) -> String {
     let mut out: String = s

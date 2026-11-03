@@ -88,9 +88,18 @@ nombre inválido, un grafo sin bloques o más entradas extensibles que el máxim
 bloque son errores de validación, antes de ejecutar el layout.
 Un campo desconocido (`instace`, `partiton`...) es un error al leer el JSON: un
 typo nunca se ignora en silencio.
+Los textos libres que van al XML (comentarios, `type`, `address`, `comment` e `init` de
+las variables, literales de los links) no pueden tener caracteres de control salvo
+tabulación y saltos de línea: XML 1.0 no los admite ni escapados.
 
 `variables` es opcional: lo que no se declara se tipa por inferencia (`src/types.rs`), y
 una variable sin tipo deducible es un error.
+
+`task` es `MAST` por defecto; también se admiten `FAST`, `AUX0` a `AUX3` y `SAFE`, sin
+distinguir mayúsculas, y el XML lleva el nombre en mayúsculas. En una variable declarada,
+`address` tiene que ser una dirección topológica (`%MW100`) e `init`, si el tipo es
+elemental, un literal: uno tipado tiene que ser del tipo declarado (`INT#3` no inicializa
+un `WORD`), y uno sin prefijo (`16#FF`, `1.5`) solo sugiere el tipo, igual que en un pin.
 
 Para un programa con varios equipos, cada bloque lleva `group` (equipo: `P101`) y
 opcionalmente `stage` (etapa: `entradas`, `salidas`...). `partition` controla la división:
@@ -163,6 +172,9 @@ Cada bloque va alineado a la izquierda de su capa. Antes de exportar, `layout.rs
 valida la grilla igual (bloques y comentarios sin superponerse, cables
 ortogonales que no se tocan entre salidas distintas): si algo falla, la generación da
 error en vez de producir un XML roto.
+Un bloque propio no puede pasar de 1000 celdas de ancho ni de alto, y una sección no
+puede pasar de `sugiyama::MAX_EXTENT` (2²⁴) celdas por eje: son topes propios de fbd-gen
+para que las cuentas enteras no desborden, y pasarlos es un error.
 
 ## Hechos verificados contra Control Expert 15.1
 
