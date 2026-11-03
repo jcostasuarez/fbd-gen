@@ -110,6 +110,9 @@ Los literales tipados (`REAL#1.5`, `DINT#3`, `WORD#16#FF`, `T#5s`...) aportan su
 la inferencia. Las familias escalares `ANY_BIT`, `ANY_INT`, `ANY_REAL`, `ANY_NUM` y
 `ANY_ELEMENTARY` rechazan tipos incompatibles antes de generar XML. Las familias de
 arrays, referencias e IODDT todavía requieren validación en Control Expert.
+Dos tipos elementales distintos unidos por un cable o una variable (`BOOL` y `TIME`,
+`INT` y `DINT`) son un error; `EBOOL` y `BOOL` son compatibles. Entre tipos derivados
+(arrays, DDT) la diferencia es un aviso, porque puede tratarse de un alias.
 
 `--max-fanout` es un umbral de simplificación. Las redes se ordenan para que la fuente
 de una variable creada por fan-out se ejecute antes que sus destinos, aunque estos se

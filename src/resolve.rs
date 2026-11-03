@@ -163,10 +163,6 @@ fn build_block(
     }
 }
 
-fn is_generic(ty: &str) -> bool {
-    ty.to_ascii_uppercase().starts_with("ANY")
-}
-
 pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Option<Section> {
     // El nombre termina en la sección de Control Expert y en los archivos de salida.
     if !is_identifier(&spec.name) {
@@ -362,14 +358,7 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
                 if !claim_input(&section, to, diags) {
                     continue;
                 }
-                let (tf, tt) = (&section.pin(from).ty, &section.pin(to).ty);
-                if !is_generic(tf) && !is_generic(tt) && !tf.eq_ignore_ascii_case(tt) {
-                    diags.push(
-                        Level::Warning,
-                        STAGE,
-                        format!("{link}: tipos distintos {tf} -> {tt}"),
-                    );
-                }
+                // La compatibilidad de tipos la valida la inferencia (types.rs).
                 section.wires.push(Wire { from, to });
             }
             (None, Some(to)) => {

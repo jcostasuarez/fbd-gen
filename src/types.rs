@@ -101,16 +101,61 @@ fn literal_hint(lit: &str) -> Option<&'static str> {
     }
 }
 
-/// EBOOL se conecta donde se espera BOOL; no es un conflicto real.
+/// Forma canónica de un tipo: sin espacios ni distinción de mayúsculas, con los alias
+/// IEC unificados. EBOOL se conecta donde se espera BOOL, así que no es un conflicto.
+fn canonical(ty: &str) -> String {
+    let t: String = ty
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    match t.as_str() {
+        "EBOOL" => "BOOL".into(),
+        "TIME_OF_DAY" => "TOD".into(),
+        "DATE_AND_TIME" => "DT".into(),
+        _ => t,
+    }
+}
+
 fn compatible(a: &str, b: &str) -> bool {
-    let norm = |t: &str| {
-        if t.eq_ignore_ascii_case("EBOOL") {
-            "BOOL".to_string()
-        } else {
-            t.to_ascii_uppercase()
-        }
-    };
-    norm(a) == norm(b)
+    canonical(a) == canonical(b)
+}
+
+/// Tipo elemental IEC: entre dos elementales distintos no hay conversión implícita, así
+/// que Control Expert rechaza la conexión. Los derivados (arrays, DDT) pueden tener alias.
+fn is_elementary(ty: &str) -> bool {
+    matches!(
+        canonical(ty).as_str(),
+        "BOOL"
+            | "BYTE"
+            | "WORD"
+            | "DWORD"
+            | "LWORD"
+            | "SINT"
+            | "INT"
+            | "DINT"
+            | "LINT"
+            | "USINT"
+            | "UINT"
+            | "UDINT"
+            | "ULINT"
+            | "REAL"
+            | "LREAL"
+            | "TIME"
+            | "DATE"
+            | "TOD"
+            | "DT"
+            | "STRING"
+            | "WSTRING"
+    )
+}
+
+/// Tipo concreto que impone un pin, una declaración o un literal tipado, con su origen
+/// para los mensajes.
+struct Strong {
+    node: usize,
+    ty: String,
+    origin: String,
 }
 
 struct UnionFind(Vec<usize>);
@@ -178,27 +223,36 @@ pub fn infer_all(
     };
 
     let mut links: Vec<(usize, usize)> = Vec::new();
-    let mut strong: Vec<(usize, String)> = Vec::new();
+    let mut strong: Vec<Strong> = Vec::new();
     let mut weak: Vec<(usize, &'static str)> = Vec::new();
 
     for (bi, b) in section.blocks.iter().enumerate() {
         let mut generic_groups: HashMap<String, usize> = HashMap::new();
         for (pi, p) in b.pins.iter().enumerate() {
-            let n = pin_node[&PinRef { block: bi, pin: pi }];
+            let r = PinRef { block: bi, pin: pi };
+            let n = pin_node[&r];
             if is_generic(&p.ty) {
                 if b.kind == Kind::Ef {
                     let first = *generic_groups.entry(p.ty.to_ascii_uppercase()).or_insert(n);
                     links.push((first, n));
                 }
             } else {
-                strong.push((n, p.ty.clone()));
+                strong.push(Strong {
+                    node: n,
+                    ty: p.ty.clone(),
+                    origin: section.pin_path(r),
+                });
             }
             for param in [&p.param_in, &p.param_out].into_iter().flatten() {
                 match param {
                     Param::Var(v) => links.push((n, var_of(v, &mut var_names))),
                     Param::Lit(l) => {
                         if let Some(ty) = typed_literal_type(l) {
-                            strong.push((n, ty.to_string()));
+                            strong.push(Strong {
+                                node: n,
+                                ty: ty.to_string(),
+                                origin: format!("{l} en {}", section.pin_path(r)),
+                            });
                         } else {
                             weak.extend(literal_hint(l).map(|h| (n, h)));
                         }
@@ -214,7 +268,11 @@ pub fn infer_all(
     for d in declared {
         decl_by_name.insert(d.name.to_ascii_uppercase(), d);
         if let Some(&n) = var_node.get(&d.name.to_ascii_uppercase()) {
-            strong.push((n, d.ty.clone()));
+            strong.push(Strong {
+                node: n,
+                ty: d.ty.clone(),
+                origin: format!("declaración de {}", d.name),
+            });
         }
     }
 
@@ -223,8 +281,42 @@ pub fn infer_all(
         uf.union(a, b);
     }
     let mut class_strong: BTreeMap<usize, Vec<String>> = BTreeMap::new();
-    for (n, t) in strong {
-        class_strong.entry(uf.find(n)).or_default().push(t);
+    let mut class_origin: BTreeMap<usize, Vec<Strong>> = BTreeMap::new();
+    for s in strong {
+        let class = uf.find(s.node);
+        class_strong.entry(class).or_default().push(s.ty.clone());
+        class_origin.entry(class).or_default().push(s);
+    }
+    let mut class_vars: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+    for (i, name) in var_names.iter().enumerate() {
+        class_vars
+            .entry(uf.find(pin_node.len() + i))
+            .or_default()
+            .push(name);
+    }
+    // Una clase (cables, variables y pines genéricos unidos) tiene que tener un solo
+    // tipo concreto. Entre elementales es un error seguro de compilación.
+    for (class, strongs) in &class_origin {
+        let first = &strongs[0];
+        if let Some(other) = strongs.iter().find(|s| !compatible(&s.ty, &first.ty)) {
+            let level = if is_elementary(&first.ty) && is_elementary(&other.ty) {
+                Level::Error
+            } else {
+                Level::Warning
+            };
+            let subject = class_vars
+                .get(class)
+                .map(|v| format!("{}: ", v.join(", ")))
+                .unwrap_or_default();
+            diags.push(
+                level,
+                STAGE,
+                format!(
+                    "{subject}tipos incompatibles {} ({}) y {} ({})",
+                    first.ty, first.origin, other.ty, other.origin
+                ),
+            );
+        }
     }
     let mut class_weak: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
     for (n, t) in weak {
@@ -273,14 +365,6 @@ pub fn infer_all(
     for (i, name) in var_names.iter().enumerate() {
         let class = uf.find(pin_node.len() + i);
         let decl = decl_by_name.get(&name.to_ascii_uppercase()).copied();
-        let strongs = class_strong.get(&class).map(Vec::as_slice).unwrap_or(&[]);
-        if let Some(conflict) = strongs.iter().find(|t| !compatible(t, &strongs[0])) {
-            diags.push(
-                Level::Warning,
-                STAGE,
-                format!("{name}: tipos en conflicto {} y {conflict}", strongs[0]),
-            );
-        }
         let ty = decl.map(|d| d.ty.clone()).or_else(|| class_type(class));
         match ty {
             Some(ty) => result.push(TypedVar {

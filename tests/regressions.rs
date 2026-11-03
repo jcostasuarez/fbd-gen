@@ -365,3 +365,80 @@ fn unknown_fields_in_the_input_are_rejected() {
     .unwrap();
     assert_eq!(ok.links[0].ends(), ("A", "t.IN"));
 }
+
+#[test]
+fn incompatible_elementary_types_are_errors_before_generating_xml() {
+    // BOOL -> variable -> TIME: Control Expert no compila esa sección.
+    let through_variable = spec(
+        r#"{"name":"T","blocks":[{"id":"a","type":"TON"},{"id":"b","type":"TON"}],
+        "links":[["Start","a.IN"],["T#5s","a.PT"],["a.Q","X"],["Start","b.IN"],["X","b.PT"]]}"#,
+    );
+    let error = generator().generate_program(&through_variable).unwrap_err();
+    let errors: Vec<&str> = error
+        .diagnostics()
+        .iter()
+        .filter(|d| d.level == Level::Error)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|m| m.starts_with("X: tipos incompatibles") && m.contains("a.Q")),
+        "{errors:?}"
+    );
+
+    // Lo mismo con un cable directo y con un literal tipado.
+    for json in [
+        r#"{"name":"T","blocks":[{"id":"a","type":"TON"},{"id":"b","type":"TON"}],
+        "links":[["Start","a.IN"],["T#5s","a.PT"],["a.Q","b.PT"],["Start","b.IN"]]}"#,
+        r#"{"name":"T","blocks":[{"id":"a","type":"TON"}],
+        "links":[["Start","a.IN"],["INT#5","a.PT"]]}"#,
+    ] {
+        let error = generator().generate_program(&spec(json)).unwrap_err();
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|d| d.level == Level::Error && d.message.contains("tipos incompatibles")),
+            "{json}: {:?}",
+            error.diagnostics()
+        );
+    }
+}
+
+#[test]
+fn ebool_and_bool_are_compatible() {
+    let s = spec(
+        r#"{"name":"T","variables":[{"name":"In1","type":"EBOOL"}],
+        "blocks":[{"id":"a","type":"TON"}],
+        "links":[["In1","a.IN"],["T#5s","a.PT"],["a.Q","Out1"]]}"#,
+    );
+    let result = generator().generate_program(&s).unwrap();
+    let all = result
+        .diagnostics
+        .iter()
+        .chain(result.sections.iter().flat_map(|s| &s.diagnostics));
+    assert!(
+        all.into_iter()
+            .all(|d| !d.message.contains("incompatibles"))
+    );
+}
+
+#[test]
+fn derived_type_mismatch_is_only_a_warning() {
+    // Los alias de arrays/DDT no se pueden decidir sin el diccionario del proyecto.
+    let s = spec(
+        r#"{"name":"T","variables":[{"name":"V","type":"ARRUINT2"}],
+        "blocks":[{"id":"a","type":"TON"}],
+        "links":[["Start","a.IN"],["V","a.PT"],["a.Q","Out1"]]}"#,
+    );
+    // TIME (pin) contra ARRUINT2 (declaración): uno es derivado, así que se genera
+    // igual y queda un aviso.
+    let result = generator().generate_program(&s).unwrap();
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.level == Level::Warning && d.message.contains("tipos incompatibles"))
+    );
+}
