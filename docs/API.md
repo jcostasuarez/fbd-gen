@@ -85,7 +85,9 @@ ejecución. Cada `GeneratedSection` contiene:
   de validación, tipos, consistencia y partición están una sola vez, en el programa.
   Cada `Diagnostic` tiene `level`, `stage` (`Stage::Validate`, `Types`, `Consistency`,
   `Partition`, `Normalize` o `Layout`, en minúsculas al serializar), `code`, `location`
-  y `message` (ver [Diagnósticos](#diagnósticos)).
+  y `message` (ver [Diagnósticos](#diagnósticos)). `Diagnostic`, `Level`, `Stage` y
+  `DiagnosticCode` implementan `Display`; el de `Diagnostic` es el formato de la CLI
+  (`[warning] normalize/fanout_to_variable: ...`).
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
 - `file_name(ext)`: nombre de archivo que usa la CLI (`<sección>.xbd`, `.svg`, `.layout.json`).
@@ -104,8 +106,14 @@ Un resultado `Ok` no contiene secciones inválidas ni salidas opcionales. Los er
 | `InvalidInput { scope, diagnostics }` | Grafo inválido; incluye el ámbito y los diagnósticos |
 | `InvalidConfig { message }` | Opciones fuera de rango o inválidas |
 | `Library(LibraryError)` | Lectura o deserialización del catálogo base |
-| `Layout { section, source }` | El motor de layout no pudo dibujar la sección sin violar la grilla |
+| `Layout { section, source }` | No se pudo dibujar la sección; `source` es un `SectionLayoutError` |
 | `Internal { section, message }` | Se rompió un invariante del pipeline: es un bug de fbd-gen, no un problema de la entrada |
+
+`SectionLayoutError::Engine` envuelve el `sugiyama::LayoutError` del motor (ciclo,
+puerto fuera de su nodo, red demasiado grande o un invariante interno) y
+`SectionLayoutError::Grid` indica que la hoja excede `sugiyama::MAX_EXTENT` o que el
+dibujo violaría un invariante de la grilla. Se distinguen con `match`, sin parsear el
+mensaje.
 
 La generación no entra en pánico: el código de producción no tiene `unwrap`, `expect`,
 `panic!` ni `unreachable!` (lo impone un lint de clippy). Un invariante roto llega como
@@ -160,6 +168,8 @@ for d in error.diagnostics() {
 
 La CLI los imprime como `[error] validate/unknown_pin: ...`, y `manifest.json` y cada
 `.layout.json` los incluyen completos.
+`fbd_gen::serde_json` re-exporta la versión de `serde_json` cuyo `Error` aparece en la
+API (`LibraryError::Json`, `layout_json`, `manifest_json`).
 
 ## DFB y funciones externas
 

@@ -9,11 +9,19 @@ use serde::{Deserialize, Serialize};
 mod registry;
 pub use registry::LibraryError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+/// Tipo de bloque de la IEC 61131-3 tal como lo clasifica Control Expert.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "EF, EFB y DFB son las tres clases de bloque de Control Expert"
+)]
 pub enum Kind {
+    /// Función elemental: sin estado ni instancia.
     Ef,
+    /// Bloque de función elemental: tiene estado y se instancia con nombre.
     Efb,
+    /// Bloque de función derivado, definido por el usuario en Control Expert.
     Dfb,
 }
 
@@ -24,14 +32,18 @@ impl Kind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Entrada extensible (`IN1`, `IN2`...): una EF como `AND` acepta de `min` a `max` pines.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct Extensible {
+    /// Cantidad mínima de pines de la extensión.
     pub min: u32,
+    /// Cantidad máxima de pines de la extensión.
     pub max: u32,
     /// `IN1` -> prefijo `IN`, primer índice 1; `IN0` -> `IN`, 0.
     pub prefix: String,
+    /// Índice del primer pin de la extensión.
     pub first_index: u32,
 }
 
@@ -46,6 +58,15 @@ impl Extensible {
         }
     }
 
+    /// Nombre del pin `k` (desde 0) de la extensión: `IN` y 1 dan `IN1`, `IN2`...
+    ///
+    /// ```
+    /// use fbd_gen::ExtensiblePin;
+    ///
+    /// let ext = ExtensiblePin::new("IN", 1, 2, 32);
+    /// assert_eq!(ext.pin_name(2), "IN3");
+    /// assert_eq!(ext.index_of("in3"), Some(2));
+    /// ```
     pub fn pin_name(&self, k: u32) -> String {
         format!("{}{}", self.prefix, self.first_index + k)
     }
@@ -64,15 +85,19 @@ impl Extensible {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Pin de la interfaz de un bloque.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct PinDef {
+    /// Nombre del pin, único en el bloque sin distinguir mayúsculas.
     pub name: String,
+    /// Tipo IEC (`BOOL`, `INT`, `ANY_NUM`...) o DDT.
     #[serde(rename = "type")]
     pub ty: String,
     /// Posición en su lado (1 = arriba). `None` = pin sin representación gráfica.
     pub position: Option<u32>,
+    /// Si el pin es la primera entrada de una extensión.
     pub extensible: Option<Extensible>,
 }
 
@@ -88,27 +113,36 @@ impl PinDef {
     }
 
     /// Convierte el pin en el primero de una serie extensible (`IN1`, `IN2`...).
+    #[must_use]
     pub fn with_extensible(mut self, extensible: Extensible) -> Self {
         self.extensible = Some(extensible);
         self
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Interfaz y geometría de una EF/EFB/DFB: lo necesario para instanciarla y dibujarla.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct BlockDef {
+    /// Nombre del tipo de bloque (`TON`, `AND`, `MotorPropio`...).
     pub name: String,
+    /// Clase de bloque: EF, EFB o DFB.
     pub kind: Kind,
+    /// Función genérica de la que esta es una variante tipada (`ADD` para `ADD_REAL`).
     pub typed_variant_of: Option<String>,
+    /// Entradas, del lado izquierdo.
     #[serde(default)]
     pub inputs: Vec<PinDef>,
+    /// Salidas, del lado derecho.
     #[serde(default)]
     pub outputs: Vec<PinDef>,
+    /// Pines IN_OUT: ocupan su posición en ambos lados.
     #[serde(default)]
     pub in_outs: Vec<PinDef>,
     /// Ancho en celdas de grilla (medido o estimado).
     pub width: u32,
+    /// Si Control Expert midió el ancho; si no, es una estimación.
     #[serde(default = "measured_width")]
     pub width_measured: bool,
 }
@@ -132,6 +166,7 @@ impl BlockDef {
     }
 }
 
+/// Catálogo de bloques indexado por nombre, sin distinguir mayúsculas.
 #[derive(Debug, Clone, Default)]
 pub struct Library {
     /// Por nombre en mayúsculas: búsqueda sin distinguir mayúsculas y recorrido en un
@@ -140,6 +175,11 @@ pub struct Library {
 }
 
 impl Library {
+    /// Carga la librería exportada de Control Expert desde `path`.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Io`] si no se puede leer; además los de [`Library::from_json_str`].
     pub fn load(path: impl AsRef<Path>) -> Result<Self, LibraryError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|source| LibraryError::Io {
@@ -152,6 +192,12 @@ impl Library {
     /// Carga la librería desde el JSON ya leído (mismo formato que `efb_dimensions.json`).
     /// Cada bloque pasa por las mismas validaciones que uno registrado con
     /// [`Library::register`], y un nombre repetido es un error.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Json`] si el texto no tiene el formato esperado,
+    /// [`LibraryError::InvalidDefinition`] si un bloque es inválido y
+    /// [`LibraryError::DuplicateBlock`] si un nombre se repite.
     pub fn from_json_str(text: &str) -> Result<Self, LibraryError> {
         let raw: RawLibrary = serde_json::from_str(text).map_err(LibraryError::Json)?;
         let definitions = raw
@@ -166,6 +212,11 @@ impl Library {
 
     /// La librería de Control Expert 15.1 incluida en el binario (feature `embedded-library`).
     /// Se lee una sola vez por proceso; cada llamada devuelve una copia propia.
+    ///
+    /// # Errors
+    ///
+    /// Solo si la librería incluida no pasa la validación: un `efb_dimensions.json`
+    /// corrupto al compilar el crate.
     #[cfg(feature = "embedded-library")]
     pub fn embedded() -> Result<Self, LibraryError> {
         static EMBEDDED: std::sync::OnceLock<Library> = std::sync::OnceLock::new();
@@ -176,6 +227,7 @@ impl Library {
         Ok(EMBEDDED.get_or_init(|| library).clone())
     }
 
+    /// Definición del bloque `name`, sin distinguir mayúsculas.
     pub fn get(&self, name: &str) -> Option<&BlockDef> {
         self.blocks.get(&name.to_ascii_uppercase())
     }
@@ -187,10 +239,12 @@ impl Library {
         self.blocks.values()
     }
 
+    /// Cantidad de bloques del catálogo.
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
 
+    /// Si el catálogo no tiene bloques.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
@@ -211,15 +265,18 @@ impl<'a> IntoIterator for &'a Library {
 /// Se calcula en enteros: 5 celdas cada 8 caracteres de nombre de pin.
 fn estimate_width(name: &str, inputs: &[RawPin], outputs: &[RawPin], in_outs: &[RawPin]) -> u32 {
     let longest = |pins: &mut dyn Iterator<Item = &RawPin>| {
-        pins.map(|p| p.name.chars().count() as u32)
-            .max()
-            .unwrap_or(0)
+        pins.map(|p| char_count(&p.name)).max().unwrap_or(0)
     };
     let left = longest(&mut inputs.iter().chain(in_outs));
     let right = longest(&mut outputs.iter().chain(in_outs));
-    let by_pins = (left * 5).div_ceil(8) + (right * 5).div_ceil(8) + 2;
-    let by_name = name.chars().count() as u32 + 4;
+    let by_pins = left.saturating_mul(5).div_ceil(8) + right.saturating_mul(5).div_ceil(8) + 2;
+    let by_name = char_count(name).saturating_add(4);
     by_pins.max(by_name).max(7)
+}
+
+/// Caracteres de un nombre; uno absurdo satura y la validación de ancho lo rechaza.
+fn char_count(name: &str) -> u32 {
+    u32::try_from(name.chars().count()).unwrap_or(u32::MAX)
 }
 
 #[derive(Deserialize)]
@@ -306,7 +363,7 @@ impl RawPin {
                 .name
                 .chars()
                 .rev()
-                .take_while(|c| c.is_ascii_digit())
+                .take_while(char::is_ascii_digit)
                 .count();
             let (prefix, idx) = self.name.split_at(self.name.len() - digits);
             Extensible {

@@ -16,7 +16,7 @@
 
 /// Tronco de una salida en el canal.
 #[derive(Debug, Clone)]
-pub struct Trunk {
+pub(super) struct Trunk {
     /// Vértice y fila de la salida: identifica el tronco.
     pub port: (usize, i32),
     pub src: i32,
@@ -24,7 +24,7 @@ pub struct Trunk {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Route {
+pub(super) enum Route {
     /// Columna del tronco (relativa al inicio del canal).
     Trunk(i32),
     /// Tronco partido: la llegada baja por `first` hasta `row`, cruza y los destinos
@@ -33,7 +33,7 @@ pub enum Route {
 }
 
 #[derive(Debug, Clone)]
-pub struct Channel {
+pub(super) struct Channel {
     pub columns: i32,
     pub routes: Vec<Route>,
 }
@@ -77,7 +77,7 @@ impl Piece {
     fn crossings_left_of(&self, o: &Piece) -> usize {
         let inside = |r: i32, p: &Piece| p.lo < r && r < p.hi;
         self.dst.iter().filter(|&&t| inside(t, o)).count()
-            + o.src.is_some_and(|s| inside(s, self)) as usize
+            + usize::from(o.src.is_some_and(|s| inside(s, self)))
     }
 }
 
@@ -133,7 +133,7 @@ fn free_row(src: i32, dst: i32, used: &[i32]) -> i32 {
 
 /// Columnas del canal. `rows` son las filas de todos los extremos del canal (también
 /// los cables rectos), que una fila de unión no puede usar.
-pub fn assign(trunks: &[Trunk], rows: &[i32]) -> Channel {
+pub(super) fn assign(trunks: &[Trunk], rows: &[i32]) -> Channel {
     let mut used = rows.to_vec();
     let mut split = vec![None; trunks.len()];
     let mut ps = pieces(trunks, &split);
@@ -259,7 +259,7 @@ mod tests {
 
     fn trunk(src: i32, targets: &[i32]) -> Trunk {
         Trunk {
-            port: (src as usize, 0),
+            port: (usize::try_from(src).expect("fila de prueba no negativa"), 0),
             src,
             targets: targets.to_vec(),
         }

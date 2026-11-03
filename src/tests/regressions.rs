@@ -618,11 +618,14 @@ fn sheet_beyond_the_extent_cap_is_a_layout_error() {
     );
     s.comments = vec![CommentSpec {
         at: "n".into(),
-        text: "x".repeat(2 * crate::sugiyama::MAX_EXTENT as usize),
+        text: "x".repeat(2 * usize::try_from(crate::sugiyama::MAX_EXTENT).expect("MAX_EXTENT > 0")),
     }];
     match generator.generate_program(&s) {
-        Err(crate::GenerationError::Layout { source, .. }) => {
-            assert!(source.to_string().contains("excede"), "{source}")
+        Err(crate::GenerationError::Layout {
+            source: crate::SectionLayoutError::Grid(message),
+            ..
+        }) => {
+            assert!(message.contains("excede"), "{message}");
         }
         Err(other) => panic!("se esperaba un error de layout: {other}"),
         Ok(result) => panic!(
@@ -730,5 +733,37 @@ fn initial_values_and_addresses_are_validated_before_export() {
         r#"{"name":"V","type":"EBOOL","init":"BOOL#FALSE","address":"%M1"}"#,
     ] {
         assert_eq!(errors(&program(var)), Vec::<String>::new(), "{var}");
+    }
+}
+
+#[test]
+fn variables_written_by_several_sections_are_reported_in_a_stable_order() {
+    // Antes se recorría un `HashMap`: con dos variables, el orden de los avisos cambiaba
+    // entre ejecuciones.
+    let s = spec(
+        r#"{"name":"P",
+            "variables":[{"name":"Z_Var","type":"BOOL"},{"name":"A_Var","type":"BOOL"}],
+            "blocks":[
+              {"id":"g1z","type":"NOT","group":"G1"},{"id":"g1a","type":"NOT","group":"G1"},
+              {"id":"g2z","type":"NOT","group":"G2"},{"id":"g2a","type":"NOT","group":"G2"}],
+            "links":[
+              ["BOOL#TRUE","g1z.IN"],["g1z.OUT","Z_Var"],["BOOL#TRUE","g1a.IN"],["g1a.OUT","A_Var"],
+              ["BOOL#TRUE","g2z.IN"],["g2z.OUT","Z_Var"],["BOOL#TRUE","g2a.IN"],["g2a.OUT","A_Var"]]}"#,
+    );
+    for _ in 0..20 {
+        let result = generator().generate_program(&s).unwrap();
+        let warned: Vec<&str> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("se escribe en varias secciones"))
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(
+            warned,
+            [
+                "A_VAR se escribe en varias secciones: G1, G2",
+                "Z_VAR se escribe en varias secciones: G1, G2"
+            ]
+        );
     }
 }

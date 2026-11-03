@@ -1,0 +1,16 @@
+# Configuración de clippy; los niveles de cada lint están en `[lints]` de Cargo.toml.
+
+# Un `bool` como parámetro no se entiende en la llamada (`f(true)`): enum o dos funciones.
+max-fn-params-bools = 0
+
+# Las etapas del pipeline se parten en funciones con nombre; las que emiten XML o SVG
+# en orden pueden ser algo más largas que el valor por defecto (100).
+too-many-lines-threshold = 150
+
+# En tests un pánico es la aserción.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+
+# Nombres propios y de Control Expert que no son código.
+doc-valid-idents = ["EcoStruxure", "IN_OUT", ".."]

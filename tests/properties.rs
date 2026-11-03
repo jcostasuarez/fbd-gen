@@ -34,7 +34,8 @@ impl Rng {
         self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
     fn below(&mut self, n: usize) -> usize {
-        (self.next() % n.max(1) as u64) as usize
+        let n = u64::try_from(n.max(1)).expect("cota de prueba en u64");
+        usize::try_from(self.next() % n).expect("menor que la cota")
     }
     fn chance(&mut self, percent: usize) -> bool {
         self.below(100) < percent
@@ -53,7 +54,7 @@ fn cases() -> u64 {
 
 fn generator() -> Generator {
     Generator::from_library_file(Path::new(env!("CARGO_MANIFEST_DIR")).join("efb_dimensions.json"))
-        .unwrap()
+        .expect("efb_dimensions.json es la librería del repositorio")
 }
 
 /// Bloques frecuentes en programas reales, para que una buena parte de los casos tipe.
@@ -159,7 +160,8 @@ fn plausible(rng: &mut Rng, lib: &Library) -> ProgramSpec {
             && rng.chance(40)
         {
             let span = (ext.max - ext.min).min(6) + 1;
-            block.inputs = Some(ext.min + rng.below(span as usize) as u32);
+            let extra = rng.below(usize::try_from(span).expect("a lo sumo 7"));
+            block.inputs = Some(ext.min + u32::try_from(extra).expect("a lo sumo 6"));
         }
         spec.blocks.push(block);
         blocks.push((def, generic_type(def, rng)));
@@ -276,7 +278,7 @@ const HOSTILE: &[&str] = &[
 fn hostile(rng: &mut Rng, lib: &Library) -> ProgramSpec {
     let mut spec = plausible(rng, lib);
     let long = "X".repeat(5000);
-    for _ in 0..1 + rng.below(4) {
+    for _ in 0..=rng.below(4) {
         let text = if rng.chance(5) {
             long.clone()
         } else {
@@ -397,7 +399,7 @@ fn check_locations(spec: &ProgramSpec, diags: &[Diagnostic], sections: Option<&H
                 "pin sin bloque: {d:?}"
             );
         }
-        assert!(!d.message.is_empty());
+        assert!(!d.message.is_empty(), "diagnóstico sin mensaje: {d:?}");
     }
 }
 
@@ -450,12 +452,12 @@ fn check_accepted(spec: &ProgramSpec, program: &GeneratedProgram) {
 fn run_case(generator: &Generator, spec: &ProgramSpec, label: &str) -> bool {
     let first = generator.generate_program(spec);
     let second = generator.generate_program(spec);
-    let json = serde_json::to_string(spec).unwrap();
+    let json = serde_json::to_string(spec).expect("un ProgramSpec siempre se serializa");
     match (&first, &second) {
         (Ok(a), Ok(b)) => {
             assert_eq!(
-                serde_json::to_string(a).unwrap(),
-                serde_json::to_string(b).unwrap(),
+                serde_json::to_string(a).expect("un resultado siempre se serializa"),
+                serde_json::to_string(b).expect("un resultado siempre se serializa"),
                 "{label}: no determinista\n{json}"
             );
             check_accepted(spec, a);
@@ -485,7 +487,7 @@ fn plausible_programs_satisfy_the_pipeline_contract() {
     let mut accepted = 0;
     for seed in 0..cases() {
         let spec = plausible(&mut Rng::new(seed), generator.library());
-        accepted += run_case(&generator, &spec, &format!("plausible {seed}")) as u64;
+        accepted += u64::from(run_case(&generator, &spec, &format!("plausible {seed}")));
     }
     eprintln!("plausibles aceptados: {accepted} de {}", cases());
     // El generador de casos tiene que producir programas válidos de verdad, no solo

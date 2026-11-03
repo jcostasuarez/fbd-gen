@@ -5,14 +5,14 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 /// Union-find con compresión de caminos. La raíz de cada clase es su menor elemento.
-pub struct UnionFind(Vec<usize>);
+pub(crate) struct UnionFind(Vec<usize>);
 
 impl UnionFind {
-    pub fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize) -> Self {
         Self((0..n).collect())
     }
 
-    pub fn find(&mut self, x: usize) -> usize {
+    pub(crate) fn find(&mut self, x: usize) -> usize {
         let mut r = x;
         while self.0[r] != r {
             r = self.0[r];
@@ -26,7 +26,7 @@ impl UnionFind {
         r
     }
 
-    pub fn union(&mut self, a: usize, b: usize) {
+    pub(crate) fn union(&mut self, a: usize, b: usize) {
         let (a, b) = (self.find(a), self.find(b));
         if a != b {
             self.0[a.max(b)] = a.min(b);
@@ -36,7 +36,7 @@ impl UnionFind {
 
 /// Qué hace [`topo_order`] cuando un ciclo deja nodos sin ordenar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnCycle {
+pub(crate) enum OnCycle {
     /// Devolver el orden parcial: los nodos del ciclo (y lo que depende de ellos) faltan.
     Stop,
     /// Tomar el menor nodo pendiente como si estuviera listo y seguir.
@@ -45,7 +45,7 @@ pub enum OnCycle {
 
 /// Orden topológico de `0..n` (Kahn). Entre los nodos listos sale primero el de menor
 /// índice. Las aristas repetidas cuentan tantas veces como aparecen.
-pub fn topo_order(
+pub(crate) fn topo_order(
     n: usize,
     edges: impl IntoIterator<Item = (usize, usize)>,
     on_cycle: OnCycle,

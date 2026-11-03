@@ -10,11 +10,11 @@ use fbd_gen::{
 
 fn generator() -> Generator {
     Generator::from_library_file(Path::new(env!("CARGO_MANIFEST_DIR")).join("efb_dimensions.json"))
-        .unwrap()
+        .expect("efb_dimensions.json es la librería del repositorio")
 }
 
 fn spec(json: &str) -> ProgramSpec {
-    serde_json::from_str(json).unwrap()
+    serde_json::from_str(json).unwrap_or_else(|e| panic!("JSON de prueba inválido: {e}\n{json}"))
 }
 
 /// Diagnósticos de una entrada inválida.
@@ -28,7 +28,9 @@ fn rejected(json: &str) -> Vec<Diagnostic> {
 
 /// Diagnósticos de un programa válido: los del programa y los de cada sección.
 fn accepted(json: &str) -> Vec<Diagnostic> {
-    let program = generator().generate_program(&spec(json)).unwrap();
+    let program = generator()
+        .generate_program(&spec(json))
+        .unwrap_or_else(|e| panic!("la entrada tenía que ser válida: {e}"));
     let mut all = program.diagnostics;
     for s in program.sections {
         all.extend(s.diagnostics);

@@ -10,16 +10,18 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
-use crate::model::{DiagnosticCode as Code, *};
+use crate::model::{DiagnosticCode as Code, Diagnostics, Level, Param, PinRef, Section, Stage};
 
 const STAGE: Stage = Stage::Consistency;
 
-#[derive(Debug, Clone)]
+/// Opciones del control de consistencia entre equipos (`group`).
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct ConsistencyConfig {
     /// Similitud mínima (Jaccard sobre rasgos WL) para considerar que un equipo debería
     /// seguir a un típico.
     pub similarity: f64,
+    /// Rondas de refinamiento Weisfeiler-Lehman: cuántos vecinos de distancia mira el hash.
     pub wl_rounds: usize,
 }
 
@@ -77,7 +79,6 @@ struct GroupGraph {
 }
 
 fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> GroupGraph {
-    let local: HashMap<usize, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     // Contexto de cada pin: cable interno (vecino), externo, variable, literal o nada.
     enum Ctx {
         Wire(usize, String),
@@ -86,6 +87,7 @@ fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> Grou
         Lit,
         Free,
     }
+    let local: HashMap<usize, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     let mut ctx: Vec<Vec<(String, Ctx)>> = Vec::new();
     let mut var_roles = BTreeSet::new();
     let mut block_types = BTreeMap::new();
@@ -209,10 +211,15 @@ fn jaccard(a: &[u64], b: &[u64]) -> f64 {
     }
     let union = a.len() + b.len() - inter;
     if union == 0 {
-        1.0
-    } else {
-        inter as f64 / union as f64
+        return 1.0;
     }
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_precision_loss,
+        reason = "conteos de etiquetas de un grupo, muy por debajo de 2^52"
+    )]
+    let ratio = inter as f64 / union as f64;
+    ratio
 }
 
 fn describe_diff(g: &GroupGraph, typical: &GroupGraph) -> String {
@@ -349,7 +356,7 @@ fn literal_outliers(section: &Section, members: &[&GroupGraph], diags: &mut Diag
     }
 }
 
-pub fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics) {
+pub(crate) fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics) {
     let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, b) in section.blocks.iter().enumerate() {
         if let Some(g) = &b.group {

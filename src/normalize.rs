@@ -9,11 +9,14 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::graph::{OnCycle, UnionFind, topo_order};
 use crate::iec::{sanitize, unique_name};
-use crate::model::{DiagnosticCode as Code, *};
+use crate::model::{
+    DiagnosticCode as Code, Diagnostics, GeneratedVar, Level, Param, PinRef, Section, Stage, Wire,
+};
 
 const STAGE: Stage = Stage::Normalize;
 
-#[derive(Debug, Clone)]
+/// Opciones de la normalización previa al layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NormalizeConfig {
     /// Umbral para reemplazar fan-out por variables cuando se conserva la ejecución.
@@ -26,7 +29,7 @@ impl Default for NormalizeConfig {
     }
 }
 
-pub fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mut Diagnostics) {
+pub(crate) fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mut Diagnostics) {
     let mut names = existing_names(section);
 
     // Realimentaciones: un lazo no se puede cerrar con links. Se corta solo el cable que
@@ -243,7 +246,7 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
 ///
 /// `None` si las dependencias no admiten un orden entre redes. La normalización solo
 /// corta cables cuando ese orden existe, así que después de ella es un bug.
-pub fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
+pub(crate) fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
     let n = section.blocks.len();
     let mut uf = UnionFind::new(n);
     for w in &section.wires {

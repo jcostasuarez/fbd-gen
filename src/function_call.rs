@@ -13,7 +13,7 @@ use crate::{
 
 /// Una llamada a una EF/EFB/DFB existente, exportada como una sección de un bloque.
 /// Los mapas relacionan nombres de pines con variables o literales IEC.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct FunctionCallSpec {
@@ -21,6 +21,7 @@ pub struct FunctionCallSpec {
     pub name: String,
     /// Tipo de bloque del catálogo, por ejemplo `TON`, `AND` o una DFB registrada.
     pub function: String,
+    /// Tarea dueña de la sección (MAST por defecto).
     #[serde(default = "default_task")]
     pub task: String,
     /// Solo EFB/DFB. Si falta, se usa `<nombre saneado de sección>_call`.
@@ -36,17 +37,25 @@ pub struct FunctionCallSpec {
     pub in_outs: BTreeMap<String, String>,
     /// Cantidad explícita de entradas extensibles. Si falta, se deduce de los pines.
     pub input_count: Option<u32>,
+    /// Declaraciones explícitas. Las variables no declaradas se tipan por inferencia.
     #[serde(default)]
     pub variables: Vec<VarSpec>,
+    /// Comentario del bloque generado.
     pub comment: Option<String>,
 }
 
 impl FunctionCallSpec {
     /// Como [`ProgramSpec::from_json`], para una llamada.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] con el código `invalid_json` si el texto no es
+    /// JSON válido, le falta un campo obligatorio o tiene uno desconocido.
     pub fn from_json(json: &str) -> Result<Self, GenerationError> {
         crate::generator::from_json(json)
     }
 
+    /// Llamada `name` a la función `function`, sin pines asignados.
     pub fn new(name: impl Into<String>, function: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -62,21 +71,29 @@ impl FunctionCallSpec {
         }
     }
 
+    /// Nombre de la instancia EFB/DFB; si no se da, se deriva del nombre de la sección.
+    #[must_use]
     pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
         self.instance = Some(instance.into());
         self
     }
 
+    /// Asigna una variable o un literal IEC al pin de entrada `pin`.
+    #[must_use]
     pub fn input(mut self, pin: impl Into<String>, value: impl Into<String>) -> Self {
         self.inputs.insert(pin.into(), value.into());
         self
     }
 
+    /// Conecta el pin de salida `pin` con la variable `variable`.
+    #[must_use]
     pub fn output(mut self, pin: impl Into<String>, variable: impl Into<String>) -> Self {
         self.outputs.insert(pin.into(), variable.into());
         self
     }
 
+    /// Conecta el pin IN_OUT `pin` con la variable `variable`.
+    #[must_use]
     pub fn in_out(mut self, pin: impl Into<String>, variable: impl Into<String>) -> Self {
         self.in_outs.insert(pin.into(), variable.into());
         self
@@ -98,6 +115,26 @@ fn matches_pin(pin: &PinDef, name: &str) -> bool {
 impl Generator {
     /// Genera una llamada a un bloque ya conocido. No crea su implementación ni lo
     /// registra: las DFB propias deben incorporarse antes con `register_block`.
+    ///
+    /// ```
+    /// use fbd_gen::{FunctionCallSpec, Generator};
+    ///
+    /// let generator = Generator::from_library_file("efb_dimensions.json")?;
+    /// let call = FunctionCallSpec::new("P101_Retardo", "TON")
+    ///     .with_instance("P101_Timer")
+    ///     .input("IN", "P101_Start")
+    ///     .input("PT", "T#3s")
+    ///     .output("Q", "P101_Run");
+    /// let section = generator.generate_function(&call)?;
+    /// assert!(section.variables.iter().any(|v| v.name == "P101_Timer" && v.ty == "TON"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] si `function` no está en el catálogo, si un pin
+    /// no existe o no corresponde a su lado, o si la sección resultante es inválida;
+    /// [`GenerationError::Layout`] si no se puede dibujar.
     pub fn generate_function(
         &self,
         spec: &FunctionCallSpec,

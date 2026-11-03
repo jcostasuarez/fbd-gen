@@ -40,7 +40,6 @@ version = "0.0.0"
 dependencies = [
  "fbd-gen",
  "libfuzzer-sys",
- "serde_json",
 ]
 
 [[package]]

@@ -8,10 +8,11 @@
 //! [`sugiyama`] es el motor de layout, utilizable por separado: grafos dirigidos sin
 //! ciclos con puertos en filas fijas, todo en coordenadas enteras.
 //!
-//! ```no_run
+//! ```
 //! use fbd_gen::{Generator, ProgramSpec};
 //!
-//! let generator = Generator::embedded()?;
+//! // Con el feature `embedded-library`, `Generator::embedded()` evita leer el archivo.
+//! let generator = Generator::from_library_file("efb_dimensions.json")?;
 //! let json = std::fs::read_to_string("examples/planta_bombas.json")?;
 //! let spec: ProgramSpec = serde_json::from_str(&json)?;
 //! let program = generator.generate_program(&spec)?;
@@ -63,13 +64,16 @@ mod tests;
 #[cfg(doctest)]
 #[doc = include_str!("../docs/API.md")]
 struct ApiGuide;
+/// Versión de `serde_json` cuyo `Error` aparece en esta API ([`LibraryError::Json`],
+/// [`GeneratedSection::layout_json`]). Usarla evita choques si el llamador depende de otra.
+pub use serde_json;
 
 pub use consistency::ConsistencyConfig;
 pub use function_call::FunctionCallSpec;
 pub use generator::{
     GeneratedProgram, GeneratedSection, GenerationError, Generator, GeneratorConfig, SectionSpec,
 };
-pub use layout::LayoutConfig;
+pub use layout::{LayoutConfig, LayoutError as SectionLayoutError};
 pub use library::{
     BlockDef as BlockDefinition, Extensible as ExtensiblePin, Kind as BlockKind, Library,
     LibraryError, PinDef as PinDefinition,

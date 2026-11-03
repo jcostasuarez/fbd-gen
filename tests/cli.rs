@@ -16,11 +16,14 @@ fn run(args: &[&str], stdin: Option<&str>) -> Output {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap();
-    let mut pipe = child.stdin.take().unwrap();
-    pipe.write_all(stdin.unwrap_or("").as_bytes()).unwrap();
+        .expect("el binario fbd-gen se compila para los tests de CLI");
+    let mut pipe = child.stdin.take().expect("stdin se pidió con Stdio::piped");
+    pipe.write_all(stdin.unwrap_or("").as_bytes())
+        .expect("no se pudo escribir en stdin de la CLI");
     drop(pipe);
-    child.wait_with_output().unwrap()
+    child
+        .wait_with_output()
+        .expect("no se pudo esperar a la CLI")
 }
 
 fn json(output: &Output) -> serde_json::Value {

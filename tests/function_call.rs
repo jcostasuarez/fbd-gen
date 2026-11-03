@@ -1,10 +1,12 @@
+//! `Generator::generate_function`: una sola llamada a un bloque existente.
+
 use std::path::Path;
 
 use fbd_gen::{FunctionCallSpec, GenerationError, Generator, VarSpec};
 
 fn generator() -> Generator {
     Generator::from_library_file(Path::new(env!("CARGO_MANIFEST_DIR")).join("efb_dimensions.json"))
-        .unwrap()
+        .expect("efb_dimensions.json es la librería del repositorio")
 }
 
 #[test]

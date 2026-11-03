@@ -34,3 +34,56 @@ serde_json = "1.0.154"
 
 [dev-dependencies]
 roxmltree = "0.20"
+
+# Lints basados en BeautifulRust (https://github.com/morganlinton/BeautifulRust), que
+# resume Rust API Guidelines, Effective Rust, Rust Design Patterns y las guías de
+# Google y Microsoft. Todo es "warn"; CI los vuelve errores con `-D warnings`.
+# Para silenciar uno localmente: `#[expect(clippy::lint, reason = "...")]`.
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Pánicos: errores con `?` y `expect("por qué no puede fallar")`.
+unwrap_used = "warn"
+panic_in_result_fn = "warn"
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+missing_assert_message = "warn"
+
+# Las supresiones se justifican y caducan cuando dejan de hacer falta.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+
+# Forma de la API.
+fn_params_excessive_bools = "warn"
+struct_excessive_bools = "warn"
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+exhaustive_enums = "warn"
+
+# Idioms y restos de depuración.
+string_add = "warn"
+wildcard_imports = "warn"
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+# Conversiones que pierden información en silencio: `From`/`TryFrom` en su lugar.
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+
+# Pedantic que en este crate es ruido.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+single_match_else = "allow"   # un `match` de dos brazos se lee mejor que `if let ... else`
+similar_names = "allow"       # `x0`/`x1`, `ins`/`outs`: nombres de geometría
+many_single_char_names = "allow"
