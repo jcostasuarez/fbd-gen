@@ -1,7 +1,7 @@
 //! Carga de la librería de bloques (`efb_dimensions.json`, exportada de Control Expert 15.1)
 //! y cálculo de la geometría por bloque.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -134,7 +134,9 @@ impl BlockDef {
 
 #[derive(Debug, Clone, Default)]
 pub struct Library {
-    blocks: HashMap<String, BlockDef>,
+    /// Por nombre en mayúsculas: búsqueda sin distinguir mayúsculas y recorrido en un
+    /// orden fijo.
+    blocks: BTreeMap<String, BlockDef>,
 }
 
 impl Library {
@@ -178,12 +180,28 @@ impl Library {
         self.blocks.get(&name.to_ascii_uppercase())
     }
 
+    /// Todas las definiciones, ordenadas por nombre sin distinguir mayúsculas. Sirve, por
+    /// ejemplo, para describir el catálogo en el prompt de un LLM o para buscar bloques
+    /// por tipo de pin.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &BlockDef> {
+        self.blocks.values()
+    }
+
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
+    }
+}
+
+impl<'a> IntoIterator for &'a Library {
+    type Item = &'a BlockDef;
+    type IntoIter = std::collections::btree_map::Values<'a, String, BlockDef>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.blocks.values()
     }
 }
 

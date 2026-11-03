@@ -200,6 +200,21 @@ cargo run -- examples/custom_dfb.json --extra-lib examples/custom_blocks.json
 `register`, `register_all`, `extend_from_json` o `extend_from_file` antes de crear el generador.
 `Library::default()` permite empezar con un catálogo vacío.
 
+`Library::iter()` (o `for def in &library`) recorre todas las definiciones, base y
+propias, ordenadas por nombre sin distinguir mayúsculas; `get` busca una por nombre. Por
+ejemplo, para describirle al LLM los bloques disponibles:
+
+```rust,no_run
+use fbd_gen::{BlockKind, Generator};
+
+let generator = Generator::embedded()?;
+for def in generator.library().iter().filter(|d| d.kind == BlockKind::Efb) {
+    let inputs: Vec<&str> = def.inputs.iter().map(|p| p.name.as_str()).collect();
+    println!("{}({})", def.name, inputs.join(", "));
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 El campo `kind` admite `EF`, `EFB` y `DFB`. Para EF/EFB se puede deserializar la
 definición o construirla con `BlockDefinition::new(nombre, kind, ancho)`. Una entrada
 extensible se arma con `PinDefinition` y `ExtensiblePin` y se agrega con `pin`:

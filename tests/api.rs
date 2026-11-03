@@ -440,3 +440,26 @@ fn public_types_are_built_through_constructors() {
     .unwrap();
     assert!(placement.nodes[1].x > placement.nodes[0].x);
 }
+
+#[test]
+fn library_can_be_listed_in_a_stable_order() {
+    let mut generator = generator();
+    let base = generator.library().len();
+    generator
+        .register_block(BlockDefinition::dfb("AAA_Propio", 8).input("X", "BOOL", 1))
+        .unwrap();
+    let library = generator.library();
+    let names: Vec<&str> = library.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names.len(), base + 1);
+    assert_eq!(library.iter().len(), library.len());
+    assert!(names.contains(&"TON") && names.contains(&"AAA_Propio"));
+    let mut sorted = names.clone();
+    sorted.sort_by_key(|n| n.to_ascii_uppercase());
+    assert_eq!(names, sorted, "orden por nombre sin distinguir mayúsculas");
+    // `&Library` también se recorre con `for`.
+    let efs = library
+        .into_iter()
+        .filter(|b| b.kind == fbd_gen::BlockKind::Ef)
+        .count();
+    assert!(efs > 0 && efs < names.len());
+}
