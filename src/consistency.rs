@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::model::*;
 
-const STAGE: &str = "consistency";
+const STAGE: Stage = Stage::Consistency;
 
 #[derive(Debug, Clone)]
 pub struct ConsistencyConfig {

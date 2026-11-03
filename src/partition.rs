@@ -16,7 +16,7 @@ use crate::iec::{sanitize, unique_name};
 use crate::model::*;
 use crate::types::TypedVar;
 
-const STAGE: &str = "partition";
+const STAGE: Stage = Stage::Partition;
 
 /// Orden topológico de `blocks` según los cables internos; empates por orden del modelo.
 /// Los bloques en ciclos se agregan al final en orden del modelo.

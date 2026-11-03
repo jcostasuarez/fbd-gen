@@ -18,7 +18,6 @@ pub struct OutSection {
     pub links: Vec<OutLink>,
     pub text_boxes: Vec<OutText>,
     pub generated_variables: Vec<GeneratedVar>,
-    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,12 +62,7 @@ pub struct OutLink {
     pub points: Vec<[i32; 2]>,
 }
 
-pub fn to_output(
-    section: &Section,
-    nets: &[Vec<usize>],
-    layout: &Layout,
-    diags: &Diagnostics,
-) -> OutSection {
+pub fn to_output(section: &Section, nets: &[Vec<usize>], layout: &Layout) -> OutSection {
     let mut network_of = vec![0; section.blocks.len()];
     for (n, members) in nets.iter().enumerate() {
         for &b in members {
@@ -127,7 +121,6 @@ pub fn to_output(
             })
             .collect(),
         generated_variables: section.generated_vars.clone(),
-        diagnostics: diags.0.clone(),
     }
 }
 

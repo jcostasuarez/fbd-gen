@@ -454,12 +454,23 @@ fn program_diagnostics_are_not_repeated_in_sections() {
     );
     let result = generator().generate_program(&s).unwrap();
     assert_eq!(result.sections.len(), 2);
-    let types = |d: &[Diagnostic]| d.iter().filter(|d| d.stage == "types").count();
+    let types = |d: &[Diagnostic]| d.iter().filter(|d| d.stage == Stage::Types).count();
     assert_eq!(types(&result.diagnostics), 1);
     for section in &result.sections {
         assert_eq!(types(&section.diagnostics), 0, "{:?}", section.diagnostics);
-        assert!(section.diagnostics.iter().all(|d| d.stage != "validate"));
-        assert_eq!(section.layout.diagnostics.len(), section.diagnostics.len());
+        assert!(
+            section
+                .diagnostics
+                .iter()
+                .all(|d| d.stage != Stage::Validate)
+        );
+        // El .layout.json lleva los mismos diagnósticos que la sección.
+        let file: serde_json::Value =
+            serde_json::from_str(&section.layout_json().unwrap()).unwrap();
+        assert_eq!(
+            file["diagnostics"].as_array().unwrap().len(),
+            section.diagnostics.len()
+        );
     }
     // El cable entre secciones es una variable declarada con el tipo inferido.
     let link = result.sections[1]

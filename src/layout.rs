@@ -12,7 +12,7 @@ use crate::model::*;
 use crate::sugiyama;
 pub use crate::sugiyama::Pos;
 
-const STAGE: &str = "layout";
+const STAGE: Stage = Stage::Layout;
 
 /// Falla del layout: el motor no pudo dibujar la red o la grilla no pasó la validación.
 #[derive(Debug)]

@@ -268,7 +268,7 @@ fn program_diagnostics(json: &str) -> Vec<Diagnostic> {
     }
 }
 
-fn messages(d: &[Diagnostic], level: Level, stage: &str) -> Vec<String> {
+fn messages(d: &[Diagnostic], level: Level, stage: Stage) -> Vec<String> {
     d.iter()
         .filter(|x| x.level == level && x.stage == stage)
         .map(|x| x.message.clone())
@@ -317,8 +317,8 @@ fn consistency_flags_deviating_equipment_and_parameters() {
         ("M3", "pt"),
         ("M4", "extra"),
     ]));
-    let info = messages(&d, Level::Info, "consistency");
-    let warn = messages(&d, Level::Warning, "consistency");
+    let info = messages(&d, Level::Info, Stage::Consistency);
+    let warn = messages(&d, Level::Warning, Stage::Consistency);
     assert!(
         info.iter()
             .any(|m| m.contains("típico compartido por M1, M2, M3")),
@@ -367,7 +367,7 @@ fn circular_section_dependency_is_reported() {
             {"id":"a","type":"NOT","group":"A"},{"id":"b","type":"NOT","group":"B"}
         ],"links":[["a.OUT","b.IN"],["b.OUT","a.IN"]]}"#,
     );
-    let warn = messages(&d, Level::Warning, "partition");
+    let warn = messages(&d, Level::Warning, Stage::Partition);
     assert!(
         warn.iter().any(|m| m.contains("dependencia circular")),
         "{warn:?}"
@@ -407,7 +407,7 @@ fn block_more_connected_to_another_section_is_flagged() {
         ],"links":[["b1.OUT","a.IN1"],["b2.OUT","a.IN2"],["a.OUT","b3.IN"],
                    ["X","b1.IN"],["Y","b2.IN"],["b3.OUT","Z"]]}"#,
     );
-    let warn = messages(&d, Level::Warning, "partition");
+    let warn = messages(&d, Level::Warning, Stage::Partition);
     assert!(
         warn.iter()
             .any(|m| m.starts_with("a está en A pero tiene 3 conexiones con B")),

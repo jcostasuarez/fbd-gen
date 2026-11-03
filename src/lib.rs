@@ -54,7 +54,7 @@ pub use library::{
 };
 pub use model::{
     BlockSpec, CommentSpec, Diagnostic, Dir as PinDirection, GeneratedVar as GeneratedVariable,
-    Level, LinkSpec, Param as Parameter, PartitionSpec, ProgramSpec, VarSpec,
+    Level, LinkSpec, Param as Parameter, PartitionSpec, ProgramSpec, Stage, VarSpec,
 };
 pub use normalize::NormalizeConfig;
 pub use output::{

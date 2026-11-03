@@ -7,7 +7,7 @@ use crate::iec::{is_identifier, is_literal, is_variable_ref, var_root};
 use crate::library::{BlockDef, Library};
 use crate::model::*;
 
-const STAGE: &str = "validate";
+const STAGE: Stage = Stage::Validate;
 
 pub enum Endpoint {
     Pin { block: usize, pin: String },

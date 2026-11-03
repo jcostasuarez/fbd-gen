@@ -56,6 +56,8 @@ ejecución. Cada `GeneratedSection` contiene:
 - `variables`: declaraciones emitidas, incluidas variables inferidas e instancias EFB/DFB.
 - `diagnostics`: avisos e información propios de la sección (normalización y layout). Los
   de validación, tipos, consistencia y partición están una sola vez, en el programa.
+  Cada `Diagnostic` tiene `level`, `stage` (`Stage::Validate`, `Types`, `Consistency`,
+  `Partition`, `Normalize` o `Layout`, en minúsculas al serializar) y `message`.
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
 

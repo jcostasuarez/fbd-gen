@@ -12,7 +12,7 @@ use crate::iec::var_root;
 use crate::library::Kind;
 use crate::model::*;
 
-const STAGE: &str = "types";
+const STAGE: Stage = Stage::Types;
 
 fn is_generic(ty: &str) -> bool {
     ty.to_ascii_uppercase().starts_with("ANY")

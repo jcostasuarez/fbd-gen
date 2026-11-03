@@ -99,7 +99,7 @@ impl Generator {
             scope: spec.name.clone(),
             diagnostics: vec![Diagnostic {
                 level: Level::Error,
-                stage: "validate",
+                stage: crate::model::Stage::Validate,
                 message,
             }],
         };

@@ -90,9 +90,18 @@ pub struct GeneratedSection {
 }
 
 impl GeneratedSection {
-    /// Formato `.layout.json`, compatible con la CLI y sin XML/SVG duplicados.
+    /// Formato `.layout.json`: el layout más los diagnósticos de la sección, sin XML/SVG.
     pub fn layout_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.layout)
+        #[derive(Serialize)]
+        struct LayoutFile<'a> {
+            #[serde(flatten)]
+            layout: &'a output::OutSection,
+            diagnostics: &'a [Diagnostic],
+        }
+        serde_json::to_string_pretty(&LayoutFile {
+            layout: &self.layout,
+            diagnostics: &self.diagnostics,
+        })
     }
 }
 
@@ -308,7 +317,7 @@ fn render_section(
         layout::apply_swaps(&mut section, &swaps, &mut diags);
         placed = place(&section)?;
     }
-    let data = output::to_output(&section, &nets, &placed, &diags);
+    let data = output::to_output(&section, &nets, &placed);
     let xml = xef::to_exchange_xml(&section, &placed, task, &vars);
     let svg = output::to_svg(&section, &placed);
     let mut variables: Vec<VarSpec> = vars

@@ -314,10 +314,42 @@ pub enum Level {
     Info,
 }
 
+/// Etapa del pipeline que emitió un diagnóstico. Se serializa en minúsculas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum Stage {
+    Validate,
+    Types,
+    Consistency,
+    Partition,
+    Normalize,
+    Layout,
+}
+
+impl Stage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stage::Validate => "validate",
+            Stage::Types => "types",
+            Stage::Consistency => "consistency",
+            Stage::Partition => "partition",
+            Stage::Normalize => "normalize",
+            Stage::Layout => "layout",
+        }
+    }
+}
+
+impl std::fmt::Display for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: Level,
-    pub stage: &'static str,
+    pub stage: Stage,
     pub message: String,
 }
 
@@ -325,7 +357,7 @@ pub struct Diagnostic {
 pub struct Diagnostics(pub Vec<Diagnostic>);
 
 impl Diagnostics {
-    pub fn push(&mut self, level: Level, stage: &'static str, message: impl Into<String>) {
+    pub fn push(&mut self, level: Level, stage: Stage, message: impl Into<String>) {
         self.0.push(Diagnostic {
             level,
             stage,

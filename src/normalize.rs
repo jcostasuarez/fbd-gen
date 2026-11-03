@@ -11,7 +11,7 @@ use crate::graph::{OnCycle, UnionFind, topo_order};
 use crate::iec::{sanitize, unique_name};
 use crate::model::*;
 
-const STAGE: &str = "normalize";
+const STAGE: Stage = Stage::Normalize;
 
 #[derive(Debug, Clone)]
 pub struct NormalizeConfig {
