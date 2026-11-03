@@ -121,6 +121,35 @@ fn catalog_read_errors_are_typed_and_keep_the_source() {
 }
 
 #[test]
+fn base_catalog_is_validated_like_registered_blocks() {
+    let block = |name: &str, kind: &str, pin: &str| {
+        format!(
+            r#"{{"name":"{name}","kind":"{kind}","geometry":{{"inputs":[{{"name":"{pin}","type":"BOOL","position":1}}]}},"size":{{"width":7}}}}"#
+        )
+    };
+    let catalog = |blocks: &[String]| format!(r#"{{"blocks":[{}]}}"#, blocks.join(","));
+    let invalid = |json: String| match Library::from_json_str(&json) {
+        Err(LibraryError::InvalidDefinition { block, message }) => format!("{block}: {message}"),
+        Err(LibraryError::DuplicateBlock { name }) => format!("duplicado {name}"),
+        other => panic!("{other:?}"),
+    };
+
+    assert!(Library::from_json_str(&catalog(&[block("MI_EF", "EF", "IN")])).is_ok());
+    assert_eq!(
+        invalid(catalog(&[block("MI_FB", "FB", "IN")])),
+        r#"MI_FB: tipo de bloque desconocido "FB" (EF, EFB o DFB)"#
+    );
+    assert_eq!(
+        invalid(catalog(&[
+            block("MI_EF", "EF", "IN"),
+            block("mi_ef", "EF", "IN")
+        ])),
+        "duplicado mi_ef"
+    );
+    assert!(invalid(catalog(&[block("MI_EF", "EF", "EN")])).starts_with("MI_EF: pin EN"));
+}
+
+#[test]
 fn registered_dfb_exports_instance_wires_variables_and_both_in_out_sides() {
     let mut generator = generator();
     generator

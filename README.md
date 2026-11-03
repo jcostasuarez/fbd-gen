@@ -12,7 +12,9 @@ cargo run -- examples/planta_bombas.json
 
 No necesita Node, internet ni archivos externos: la librería de bloques de Control
 Expert 15.1 va incluida en el ejecutable (feature `embedded-library`, activo por
-defecto). `--lib` permite usar otra exportación de la librería. Para usar solo la
+defecto). `--lib` permite usar otra exportación de la librería; cada bloque se valida
+con las mismas reglas que un bloque propio (nombres IEC, pines sin repetir ni superponer,
+tipo EF/EFB/DFB) y un nombre repetido es un error. Para usar solo la
 librería desde otro crate:
 
 ```toml

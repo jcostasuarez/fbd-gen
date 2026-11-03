@@ -88,7 +88,7 @@ impl BlockDef {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Library {
     blocks: HashMap<String, BlockDef>,
 }
@@ -104,23 +104,30 @@ impl Library {
     }
 
     /// Carga la librería desde el JSON ya leído (mismo formato que `efb_dimensions.json`).
+    /// Cada bloque pasa por las mismas validaciones que uno registrado con
+    /// [`Library::register`], y un nombre repetido es un error.
     pub fn from_json_str(text: &str) -> Result<Self, LibraryError> {
         let raw: RawLibrary = serde_json::from_str(text).map_err(LibraryError::Json)?;
-        let blocks = raw
+        let definitions = raw
             .blocks
             .into_iter()
-            .map(|b| {
-                let def = b.into_def();
-                (def.name.to_ascii_uppercase(), def)
-            })
-            .collect();
-        Ok(Self { blocks })
+            .map(RawBlock::into_def)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut library = Self::default();
+        library.register_all(definitions)?;
+        Ok(library)
     }
 
     /// La librería de Control Expert 15.1 incluida en el binario (feature `embedded-library`).
+    /// Se lee una sola vez por proceso; cada llamada devuelve una copia propia.
     #[cfg(feature = "embedded-library")]
     pub fn embedded() -> Result<Self, LibraryError> {
-        Self::from_json_str(include_str!("../efb_dimensions.json"))
+        static EMBEDDED: std::sync::OnceLock<Library> = std::sync::OnceLock::new();
+        if let Some(library) = EMBEDDED.get() {
+            return Ok(library.clone());
+        }
+        let library = Self::from_json_str(include_str!("../efb_dimensions.json"))?;
+        Ok(EMBEDDED.get_or_init(|| library).clone())
     }
 
     pub fn get(&self, name: &str) -> Option<&BlockDef> {
@@ -200,18 +207,24 @@ struct RawSize {
 }
 
 impl RawBlock {
-    fn into_def(self) -> BlockDef {
+    fn into_def(self) -> Result<BlockDef, LibraryError> {
         let kind = match self.kind.as_str() {
+            "EF" => Kind::Ef,
             "EFB" => Kind::Efb,
             "DFB" => Kind::Dfb,
-            _ => Kind::Ef,
+            other => {
+                return Err(LibraryError::InvalidDefinition {
+                    block: self.name,
+                    message: format!("tipo de bloque desconocido \"{other}\" (EF, EFB o DFB)"),
+                });
+            }
         };
         let measured = self.size.as_ref().and_then(|s| s.width);
         let g = self.geometry;
         let width = measured
             .unwrap_or_else(|| estimate_width(&self.name, &g.inputs, &g.outputs, &g.in_outs));
         let conv = |pins: Vec<RawPin>| pins.into_iter().map(RawPin::into_def).collect();
-        BlockDef {
+        Ok(BlockDef {
             name: self.name,
             kind,
             typed_variant_of: self.typed_variant_of,
@@ -220,7 +233,7 @@ impl RawBlock {
             in_outs: conv(g.in_outs),
             width,
             width_measured: measured.is_some(),
-        }
+        })
     }
 }
 
