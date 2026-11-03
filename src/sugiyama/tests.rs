@@ -131,8 +131,14 @@ fn long_edges_and_fanout_respect_the_invariants() {
 #[test]
 fn cycles_are_rejected() {
     let nodes = [node(7, 6), node(7, 6)];
-    assert!(layout(&nodes, &[edge(0, 4, 1, 4), edge(1, 4, 0, 5)], &SPACING).is_err());
-    assert!(layout(&nodes, &[edge(0, 9, 1, 4)], &SPACING).is_err());
+    assert!(matches!(
+        layout(&nodes, &[edge(0, 4, 1, 4), edge(1, 4, 0, 5)], &SPACING),
+        Err(LayoutError::Cycle)
+    ));
+    assert!(matches!(
+        layout(&nodes, &[edge(0, 9, 1, 4)], &SPACING),
+        Err(LayoutError::PortOutOfNode { edge: 0 })
+    ));
 }
 
 #[test]

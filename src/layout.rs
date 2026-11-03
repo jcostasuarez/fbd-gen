@@ -5,14 +5,53 @@
 //! bloques superpuestos o cables que se tocan no debe salir nunca.
 
 use std::collections::HashMap;
-
-use anyhow::{Result, bail};
+use std::error::Error;
+use std::fmt;
 
 use crate::model::*;
 use crate::sugiyama;
 pub use crate::sugiyama::Pos;
 
 const STAGE: &str = "layout";
+
+/// Falla del layout: el motor no pudo dibujar la red o la grilla no pasó la validación.
+#[derive(Debug)]
+pub enum LayoutError {
+    Engine(sugiyama::LayoutError),
+    Grid(String),
+}
+
+impl fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Engine(e) => write!(f, "{e}"),
+            Self::Grid(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl Error for LayoutError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Engine(e) => Some(e),
+            Self::Grid(_) => None,
+        }
+    }
+}
+
+impl From<sugiyama::LayoutError> for LayoutError {
+    fn from(e: sugiyama::LayoutError) -> Self {
+        Self::Engine(e)
+    }
+}
+
+type Result<T> = std::result::Result<T, LayoutError>;
+
+macro_rules! bail {
+    ($($arg:tt)*) => {
+        return Err(LayoutError::Grid(format!($($arg)*)))
+    };
+}
 
 /// Medidas del dibujo, en celdas de grilla.
 #[derive(Debug, Clone, PartialEq, Eq)]

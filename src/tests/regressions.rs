@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use fbd_gen::layout::LayoutConfig;
-use fbd_gen::library::Library;
-use fbd_gen::model::*;
-use fbd_gen::normalize::{self, NormalizeConfig};
-use fbd_gen::{Generator, GeneratorConfig, resolve, types};
+use crate::layout::LayoutConfig;
+use crate::library::Library;
+use crate::model::*;
+use crate::normalize::{self, NormalizeConfig};
+use crate::{Generator, GeneratorConfig, resolve, types};
 
 fn lib() -> &'static Library {
     static LIB: OnceLock<Library> = OnceLock::new();
@@ -35,7 +35,7 @@ fn spec(json: &str) -> ProgramSpec {
 
 #[test]
 fn fanout_source_is_placed_before_consumers_declared_first() {
-    let s = spec(include_str!("../examples/probes/fanout_order.json"));
+    let s = spec(include_str!("../../examples/probes/fanout_order.json"));
     let result = generator().generate_program(&s).unwrap();
     let out = &result.sections[0];
     let json: serde_json::Value = serde_json::from_str(&out.layout_json().unwrap()).unwrap();
@@ -91,12 +91,12 @@ fn reconverging_fanout_keeps_wires_when_network_order_is_not_enough() {
     );
 }
 
-fn partitioned(json: &str) -> fbd_gen::partition::Partition {
+fn partitioned(json: &str) -> crate::partition::Partition {
     let s = spec(json);
     let mut d = Diagnostics::default();
     let mut section = resolve::resolve(&s, lib(), &mut d).unwrap();
     let vars = types::infer(&mut section, &s.variables, &mut d);
-    let result = fbd_gen::partition::partition(&section, &s.partition, &vars, &mut d);
+    let result = crate::partition::partition(&section, &s.partition, &vars, &mut d);
     assert!(!d.has_errors(), "{:?}", d.0);
     let unique: HashSet<String> = result
         .sections

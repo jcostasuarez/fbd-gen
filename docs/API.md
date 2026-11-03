@@ -54,7 +54,8 @@ ejecución. Cada `GeneratedSection` contiene:
 
 - `layout`: datos propios de bloques, pines, redes, coordenadas, recorridos y textos.
 - `variables`: declaraciones emitidas, incluidas variables inferidas e instancias EFB/DFB.
-- `diagnostics`: avisos e información de la sección.
+- `diagnostics`: avisos e información propios de la sección (normalización y layout). Los
+  de validación, tipos, consistencia y partición están una sola vez, en el programa.
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
 
@@ -195,3 +196,10 @@ let generator = fbd_gen::Generator::embedded()?;
 `fbd_gen::sugiyama::layout` se puede usar por separado: recibe cajas (`Node`), cables
 entre puertos en filas fijas (`Edge`, sin ciclos) y separaciones (`Spacing`), y devuelve la
 esquina de cada caja y los quiebres de cada cable (`Placement`), todo en enteros.
+Si la entrada no se puede dibujar devuelve `sugiyama::LayoutError`: un puerto fuera de su
+caja (`PortOutOfNode`), cables con un ciclo (`Cycle`) o restricciones sin solución
+(`Infeasible`).
+
+Los demás módulos (validación, partición, normalización, export) son internos: su orden e
+invariantes no forman parte del contrato. La API pública es `Generator`, los tipos que
+re-exporta la raíz del crate y `sugiyama`.

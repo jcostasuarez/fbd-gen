@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use fbd_gen::layout::{self, LayoutConfig};
-use fbd_gen::library::Library;
-use fbd_gen::model::*;
-use fbd_gen::normalize::{self, NormalizeConfig};
-use fbd_gen::resolve::{is_literal, resolve};
-use fbd_gen::{
+use crate::layout::{self, LayoutConfig};
+use crate::library::Library;
+use crate::model::*;
+use crate::normalize::{self, NormalizeConfig};
+use crate::resolve::{is_literal, resolve};
+use crate::{
     GeneratedProgram, GeneratedSection, GenerationError, Generator, GeneratorConfig, SectionSpec,
 };
 
@@ -184,7 +184,7 @@ fn types_are_inferred_through_generic_blocks() {
     );
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
-    let vars = fbd_gen::types::infer(&mut sec, &s.variables, &mut d);
+    let vars = crate::types::infer(&mut sec, &s.variables, &mut d);
     let ty = |n: &str| vars.iter().find(|v| v.name == n).unwrap().ty.clone();
     assert_eq!(ty("TT1"), "REAL");
     assert_eq!(ty("TT2"), "REAL");
@@ -199,7 +199,7 @@ fn untyped_variable_is_an_error() {
     );
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
-    fbd_gen::types::infer(&mut sec, &s.variables, &mut d);
+    crate::types::infer(&mut sec, &s.variables, &mut d);
     assert!(d.has_errors());
 }
 

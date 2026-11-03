@@ -21,31 +21,24 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-// Etapas internas. Son públicas para las pruebas, pero su orden e invariantes no son
-// parte del contrato: usar `Generator`.
-#[doc(hidden)]
-pub mod consistency;
+// Etapas internas: su orden e invariantes no son parte del contrato. Lo público son
+// `Generator`, los tipos que se re-exportan abajo y el motor `sugiyama`.
+mod consistency;
 mod function_call;
 mod generator;
-#[doc(hidden)]
-pub mod layout;
-#[doc(hidden)]
-pub mod library;
-#[doc(hidden)]
-pub mod model;
-#[doc(hidden)]
-pub mod normalize;
-#[doc(hidden)]
-pub mod output;
-#[doc(hidden)]
-pub mod partition;
-#[doc(hidden)]
-pub mod resolve;
+mod layout;
+mod library;
+mod model;
+mod normalize;
+mod output;
+mod partition;
+mod resolve;
 pub mod sugiyama;
-#[doc(hidden)]
-pub mod types;
-#[doc(hidden)]
-pub mod xef;
+mod types;
+mod xef;
+
+#[cfg(test)]
+mod tests;
 
 pub use consistency::ConsistencyConfig;
 pub use function_call::FunctionCallSpec;

@@ -16,7 +16,8 @@
 mod routing;
 mod simplex;
 
-use anyhow::{Result, bail};
+use std::error::Error;
+use std::fmt;
 
 use routing::{Route, Trunk};
 use simplex::Arc;
@@ -61,6 +62,32 @@ pub struct Placement {
     pub bends: Vec<Vec<Pos>>,
 }
 
+/// Entrada que el motor no puede dibujar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LayoutError {
+    /// El cable `edge` apunta a un nodo inexistente o a una fila fuera de su nodo.
+    PortOutOfNode { edge: usize },
+    /// Los cables forman un ciclo dirigido (hay que cortarlo antes).
+    Cycle,
+    /// Las restricciones de posición vertical no tienen solución.
+    Infeasible,
+}
+
+impl fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PortOutOfNode { edge } => write!(f, "cable {edge}: puerto fuera de su nodo"),
+            Self::Cycle => write!(f, "los cables forman un ciclo"),
+            Self::Infeasible => write!(f, "restricciones de posición vertical inconsistentes"),
+        }
+    }
+}
+
+impl Error for LayoutError {}
+
+type Result<T> = std::result::Result<T, LayoutError>;
+
 /// Nodo real o ficticio (un tramo de un cable largo dentro de una capa).
 struct Vertex {
     layer: usize,
@@ -85,7 +112,7 @@ pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Place
     for (i, e) in edges.iter().enumerate() {
         let ok = |v: usize, row: i32| v < nodes.len() && (0..nodes[v].height).contains(&row);
         if !ok(e.from, e.from_row) || !ok(e.to, e.to_row) {
-            bail!("cable {i}: puerto fuera de su nodo");
+            return Err(LayoutError::PortOutOfNode { edge: i });
         }
     }
     let (vertices, segments) = split_long_edges(nodes, edges)?;
@@ -108,7 +135,7 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
         })
         .collect();
     let Some(rank) = simplex::solve(nodes.len(), &arcs) else {
-        bail!("los cables forman un ciclo");
+        return Err(LayoutError::Cycle);
     };
     let mut vertices: Vec<Vertex> = nodes
         .iter()
@@ -291,7 +318,7 @@ fn place_vertically(
         }
     }
     let Some(rank) = simplex::solve(vertices.len() + segments.len(), &arcs) else {
-        bail!("restricciones de posición vertical inconsistentes");
+        return Err(LayoutError::Infeasible);
     };
     // Cada componente queda normalizada por separado; el auxiliar de un tramo puede
     // quedar arriba de sus nodos, así que se vuelve a normalizar sobre los vértices.
