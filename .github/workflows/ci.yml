@@ -61,6 +61,18 @@ jobs:
       - run: cargo test --doc
       - run: cargo test --no-default-features --features embedded-library --lib --tests
 
+  properties:
+    name: Propiedades (extendido)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # 5000 programas plausibles y 5000 hostiles por corrida (300 en `cargo test`).
+      - run: cargo test --release --test properties
+        env:
+          FBD_PROPERTY_CASES: 5000
+
   msrv:
     name: MSRV (rust-version de Cargo.toml)
     runs-on: ubuntu-latest

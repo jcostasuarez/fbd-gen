@@ -124,19 +124,22 @@ pub fn partition(
                 &topo_order(section, &blocks),
                 cfg.max_blocks.max(1),
             );
-            diags
-                .push(
-                    Level::Info,
-                    STAGE,
-                    Code::SectionSplit,
-                    format!(
-                        "{key}: {} bloques > {}, dividida en {} secciones",
-                        blocks.len(),
-                        cfg.max_blocks,
-                        chunks.len()
-                    ),
-                )
-                .at_group(&group);
+            let d = diags.push(
+                Level::Info,
+                STAGE,
+                Code::SectionSplit,
+                format!(
+                    "{key}: {} bloques > {}, dividida en {} secciones",
+                    blocks.len(),
+                    cfg.max_blocks,
+                    chunks.len()
+                ),
+            );
+            // Sin `group` explícito los bloques van a la sección del programa: no hay
+            // equipo que señalar.
+            if blocks.iter().any(|&b| section.blocks[b].group.is_some()) {
+                d.at_group(&group);
+            }
             for (i, c) in chunks.into_iter().enumerate() {
                 names.push(format!("{key}_{}", i + 1));
                 groups.push(c);

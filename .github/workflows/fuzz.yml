@@ -1,0 +1,44 @@
+name: Fuzz
+
+# Bytes arbitrarios -> JSON -> generate_program / generate_function (fuzz/).
+# Corrida corta en cada PR, larga todas las noches.
+on:
+  pull_request:
+    paths: ["src/**", "fuzz/**", "efb_dimensions.json", "Cargo.*"]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Segundos de fuzzing
+        default: "600"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Corpus inicial con los ejemplos
+        run: |
+          mkdir -p fuzz/corpus/generate
+          cp examples/*.json examples/probes/*.json fuzz/corpus/generate/
+      - name: Fuzzing
+        working-directory: fuzz
+        run: >
+          cargo fuzz run generate --
+          -max_len=8192
+          -max_total_time=${{ github.event.inputs.seconds || (github.event_name == 'schedule' && '1800') || '60' }}
+      - name: Entradas que fallaron
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/

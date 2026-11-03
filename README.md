@@ -223,6 +223,19 @@ network simplex contra su solución inicial. Las regresiones cubren además la g
 entera de los ejemplos, el determinismo, entradas hostiles, el orden de fan-out, la
 conservación de realimentaciones y cables necesarios, colisiones de nombres, familias
 escalares y literales tipados.
+
+`tests/properties.rs` genera programas pseudoaleatorios desde la librería real
+(plausibles y hostiles) y verifica el contrato del pipeline completo: sin pánicos ni
+errores internos, determinismo, rechazos con errores y ubicaciones que apuntan a la
+entrada, XML y SVG bien formados y coherentes con el layout. `FBD_PROPERTY_CASES` cambia
+la cantidad de casos (300 por defecto; el CI corre 5000 en release).
+
+`fuzz/` es un target de `cargo-fuzz` sobre bytes arbitrarios (requiere nightly):
+
+```bash
+cd fuzz && cargo +nightly fuzz run generate -- -max_total_time=300
+```
+
 `examples/probes/fanout_order.json` permite inspeccionar también el layout generado
 cuando los consumidores están declarados antes que la fuente. Estas pruebas no
 reemplazan la compilación y el round-trip en Control Expert descritos arriba.
