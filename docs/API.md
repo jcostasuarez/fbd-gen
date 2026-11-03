@@ -60,6 +60,11 @@ ejecución. Cada `GeneratedSection` contiene:
   `Partition`, `Normalize` o `Layout`, en minúsculas al serializar) y `message`.
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
+- `file_name(ext)`: nombre de archivo que usa la CLI (`<sección>.xbd`, `.svg`, `.layout.json`).
+
+`GeneratedProgram::write_to(dir)` escribe los mismos archivos que la CLI más
+`manifest.json` (secciones en orden de ejecución y diagnósticos del programa), y
+`manifest_json()` devuelve solo el manifest.
 
 Los resultados no toman referencias a la entrada ni al generador: pueden conservarse
 después de liberar ambos. También implementan `Serialize` para intercambiarlos completos.

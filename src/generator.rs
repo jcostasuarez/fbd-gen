@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -89,7 +90,65 @@ pub struct GeneratedSection {
     pub svg: String,
 }
 
+impl GeneratedProgram {
+    /// Contenido de `manifest.json`: las secciones en orden de ejecución, con sus archivos,
+    /// y los diagnósticos del programa. Es el formato que leen `scripts/ce_check.py` y
+    /// `scripts/roundtrip_diff.py`.
+    pub fn manifest_json(&self) -> Result<String, serde_json::Error> {
+        // Campos en orden alfabético: es el orden histórico del archivo.
+        #[derive(Serialize)]
+        struct Manifest<'a> {
+            diagnostics: &'a [Diagnostic],
+            program: &'a str,
+            sections: Vec<ManifestSection>,
+            task: &'a str,
+        }
+        #[derive(Serialize)]
+        struct ManifestSection {
+            layout: String,
+            name: String,
+            svg: String,
+            xml: String,
+        }
+        serde_json::to_string_pretty(&Manifest {
+            diagnostics: &self.diagnostics,
+            program: &self.name,
+            sections: self
+                .sections
+                .iter()
+                .map(|s| ManifestSection {
+                    layout: s.file_name("layout.json"),
+                    name: s.name.clone(),
+                    svg: s.file_name("svg"),
+                    xml: s.file_name("xbd"),
+                })
+                .collect(),
+            task: &self.task,
+        })
+    }
+
+    /// Escribe en `dir` lo mismo que la CLI: por sección `.xbd`, `.svg` y `.layout.json`,
+    /// más `manifest.json`. Crea la carpeta si no existe y devuelve la ruta del manifest.
+    pub fn write_to(&self, dir: impl AsRef<Path>) -> io::Result<PathBuf> {
+        let dir = dir.as_ref();
+        std::fs::create_dir_all(dir)?;
+        for s in &self.sections {
+            std::fs::write(dir.join(s.file_name("xbd")), &s.xml)?;
+            std::fs::write(dir.join(s.file_name("svg")), &s.svg)?;
+            std::fs::write(dir.join(s.file_name("layout.json")), s.layout_json()?)?;
+        }
+        let path = dir.join("manifest.json");
+        std::fs::write(&path, self.manifest_json()?)?;
+        Ok(path)
+    }
+}
+
 impl GeneratedSection {
+    /// Archivo de la sección con la extensión dada (`xbd`, `svg`, `layout.json`).
+    pub fn file_name(&self, extension: &str) -> String {
+        format!("{}.{extension}", self.name)
+    }
+
     /// Formato `.layout.json`: el layout más los diagnósticos de la sección, sin XML/SVG.
     pub fn layout_json(&self) -> Result<String, serde_json::Error> {
         #[derive(Serialize)]
