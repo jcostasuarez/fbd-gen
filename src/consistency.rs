@@ -14,11 +14,13 @@ use crate::model::{Diagnostics, Level, Param, PinRef, Section, Stage};
 
 const STAGE: Stage = Stage::Consistency;
 
-#[derive(Debug, Clone)]
+/// Opciones del control de consistencia entre equipos (`group`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConsistencyConfig {
     /// Similitud mínima (Jaccard sobre rasgos WL) para considerar que un equipo debería
     /// seguir a un típico.
     pub similarity: f64,
+    /// Rondas de refinamiento Weisfeiler-Lehman: cuántos vecinos de distancia mira el hash.
     pub wl_rounds: usize,
 }
 

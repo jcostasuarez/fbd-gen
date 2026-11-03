@@ -13,7 +13,8 @@ use crate::model::{Diagnostics, GeneratedVar, Level, Param, PinRef, Section, Sta
 
 const STAGE: Stage = Stage::Normalize;
 
-#[derive(Debug, Clone)]
+/// Opciones de la normalización previa al layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizeConfig {
     /// Umbral para reemplazar fan-out por variables cuando se conserva la ejecución.
     pub max_fanout: usize,

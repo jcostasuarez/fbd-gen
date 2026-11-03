@@ -18,22 +18,29 @@ use crate::{ConsistencyConfig, LayoutConfig, NormalizeConfig};
 use crate::{consistency, layout, normalize, output, partition, resolve, types, xef};
 
 /// Entrada de una sola sección: no acepta opciones de partición.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SectionSpec {
+    /// Nombre de la sección: identificador IEC.
     pub name: String,
+    /// Tarea dueña de la sección (MAST por defecto).
     #[serde(default = "model::default_task")]
     pub task: String,
+    /// Declaraciones explícitas. Las variables no declaradas se tipan por inferencia.
     #[serde(default)]
     pub variables: Vec<VarSpec>,
+    /// Bloques de la sección.
     pub blocks: Vec<BlockSpec>,
+    /// Conexiones: cada extremo es `bloque.PIN`, un literal IEC o una variable.
     #[serde(default)]
     pub links: Vec<model::LinkSpec>,
+    /// Comentarios de red, dibujados como encabezado de la red de su bloque.
     #[serde(default)]
     pub comments: Vec<CommentSpec>,
 }
 
 impl SectionSpec {
+    /// Sección `name` vacía, en la tarea MAST.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -61,32 +68,45 @@ impl From<SectionSpec> for ProgramSpec {
 }
 
 /// Opciones reutilizables para todas las generaciones de una instancia.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GeneratorConfig {
+    /// Fan-out y realimentaciones.
     pub normalization: NormalizeConfig,
+    /// Medidas del dibujo en celdas.
     pub layout: LayoutConfig,
+    /// Control de consistencia entre equipos.
     pub consistency: ConsistencyConfig,
 }
 
 /// Una generación exitosa siempre contiene todas sus secciones, ordenadas.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedProgram {
+    /// Nombre del programa.
     pub name: String,
+    /// Tarea en su forma canónica (`MAST`, `FAST`...).
     pub task: String,
+    /// Diagnósticos de validación, tipos, consistencia y partición.
     pub diagnostics: Vec<Diagnostic>,
+    /// Secciones en orden de ejecución.
     pub sections: Vec<GeneratedSection>,
 }
 
 /// Resultado propio, sin referencias al generador ni necesidad de parsear JSON.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedSection {
+    /// Nombre de la sección.
     pub name: String,
+    /// Tarea en su forma canónica (`MAST`, `FAST`...).
     pub task: String,
+    /// Diagnósticos propios de la sección: normalización y layout.
     pub diagnostics: Vec<Diagnostic>,
+    /// Bloques, pines y cables posicionados en la grilla.
     pub layout: output::OutSection,
     /// Todas las declaraciones emitidas, incluidas instancias EFB/DFB.
     pub variables: Vec<VarSpec>,
+    /// XML de intercambio FBD (`.xbd`), listo para importar en Control Expert.
     pub xml: String,
+    /// Vista previa SVG.
     pub svg: String,
 }
 
@@ -94,6 +114,10 @@ impl GeneratedProgram {
     /// Contenido de `manifest.json`: las secciones en orden de ejecución, con sus archivos,
     /// y los diagnósticos del programa. Es el formato que leen `scripts/ce_check.py` y
     /// `scripts/roundtrip_diff.py`.
+    ///
+    /// # Errors
+    ///
+    /// Si falla la serialización a JSON.
     pub fn manifest_json(&self) -> Result<String, serde_json::Error> {
         // Campos en orden alfabético: es el orden histórico del archivo.
         #[derive(Serialize)]
@@ -129,6 +153,10 @@ impl GeneratedProgram {
 
     /// Escribe en `dir` lo mismo que la CLI: por sección `.xbd`, `.svg` y `.layout.json`,
     /// más `manifest.json`. Crea la carpeta si no existe y devuelve la ruta del manifest.
+    ///
+    /// # Errors
+    ///
+    /// Si no se puede crear `dir` o escribir alguno de los archivos.
     pub fn write_to(&self, dir: impl AsRef<Path>) -> io::Result<PathBuf> {
         let dir = dir.as_ref();
         std::fs::create_dir_all(dir)?;
@@ -150,6 +178,10 @@ impl GeneratedSection {
     }
 
     /// Formato `.layout.json`: el layout más los diagnósticos de la sección, sin XML/SVG.
+    ///
+    /// # Errors
+    ///
+    /// Si falla la serialización a JSON.
     pub fn layout_json(&self) -> Result<String, serde_json::Error> {
         #[derive(Serialize)]
         struct LayoutFile<'a> {
@@ -168,21 +200,31 @@ impl GeneratedSection {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum GenerationError {
+    /// El grafo de entrada es inválido; los diagnósticos dicen por qué.
     InvalidInput {
+        /// Programa o sección donde se detectó el problema.
         scope: String,
+        /// Todos los diagnósticos acumulados, con al menos un error.
         diagnostics: Vec<Diagnostic>,
     },
+    /// Opciones de [`GeneratorConfig`] fuera de rango.
     InvalidConfig {
+        /// Qué opción falló y su rango válido.
         message: String,
     },
+    /// No se pudo leer o registrar el catálogo de bloques.
     Library(LibraryError),
+    /// El motor de layout no pudo dibujar la sección dentro de la grilla.
     Layout {
+        /// Sección que no se pudo dibujar.
         section: String,
+        /// Causa: un error del motor Sugiyama o una validación de la grilla.
         source: Box<dyn Error + Send + Sync>,
     },
 }
 
 impl GenerationError {
+    /// Diagnósticos de una entrada inválida; vacío para los demás errores.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         match self {
             Self::InvalidInput { diagnostics, .. } => diagnostics,
@@ -232,6 +274,7 @@ pub struct Generator {
 }
 
 impl Generator {
+    /// Generador sobre `library`, con las opciones por defecto.
     pub fn new(library: Library) -> Self {
         Self {
             library,
@@ -239,34 +282,62 @@ impl Generator {
         }
     }
 
+    /// Generador con la librería exportada de Control Expert en `path`.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::Library`] si el archivo no se puede leer o tiene bloques inválidos.
     pub fn from_library_file(path: impl AsRef<Path>) -> Result<Self, GenerationError> {
         Ok(Self::new(Library::load(path)?))
     }
 
     /// Generador con la librería de Control Expert 15.1 incluida en el binario.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::Library`] solo si la librería incluida no pasa la validación:
+    /// un `efb_dimensions.json` corrupto al compilar el crate.
     #[cfg(feature = "embedded-library")]
     pub fn embedded() -> Result<Self, GenerationError> {
         Ok(Self::new(Library::embedded()?))
     }
 
+    /// Reemplaza las opciones del generador.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidConfig`] si alguna medida o umbral está fuera de rango.
     pub fn with_config(mut self, config: GeneratorConfig) -> Result<Self, GenerationError> {
         validate_config(&config)?;
         self.config = config;
         Ok(self)
     }
 
+    /// Catálogo de bloques del generador.
     pub fn library(&self) -> &Library {
         &self.library
     }
+    /// Opciones vigentes.
     pub fn config(&self) -> &GeneratorConfig {
         &self.config
     }
 
     /// Registra la interfaz de una EF/EFB/DFB externa sin sustituir tipos existentes.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::InvalidDefinition`] si la interfaz es inválida y
+    /// [`LibraryError::DuplicateBlock`] si el nombre ya existe.
     pub fn register_block(&mut self, definition: BlockDef) -> Result<(), LibraryError> {
         self.library.register(definition)
     }
 
+    /// Registra las interfaces de un catálogo JSON adicional (`{ "blocks": [...] }`).
+    ///
+    /// # Errors
+    ///
+    /// Si el archivo no se puede leer o parsear, o alguna definición no se puede
+    /// registrar; en ese caso no se registra ninguna.
     pub fn register_blocks_from_file(
         &mut self,
         path: impl AsRef<Path>,
@@ -274,6 +345,14 @@ impl Generator {
         self.library.extend_from_file(path)
     }
 
+    /// Genera un programa completo: valida, controla la consistencia entre equipos,
+    /// particiona en secciones y dibuja cada una.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] si el grafo es inválido y
+    /// [`GenerationError::Layout`] si alguna sección no se puede dibujar. No hay
+    /// resultados parciales.
     pub fn generate_program(
         &self,
         spec: &ProgramSpec,
@@ -282,6 +361,11 @@ impl Generator {
     }
 
     /// Genera una sola sección. `group` y `stage` de los bloques son solo metadatos.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] si el grafo es inválido y
+    /// [`GenerationError::Layout`] si no se puede dibujar.
     pub fn generate_section(
         &self,
         spec: &SectionSpec,

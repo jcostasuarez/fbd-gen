@@ -30,28 +30,37 @@ pub const MAX_EXTENT: i32 = 1 << 24;
 /// Celda de la grilla: columna `x`, fila `y`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Pos {
+    /// Columna.
     pub x: i32,
+    /// Fila.
     pub y: i32,
 }
 
 /// Caja de un nodo. Los puertos de entrada están en la columna 0 y los de salida en la
 /// columna `width`, cada uno en su fila (relativa al borde superior).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Node {
+    /// Ancho en columnas.
     pub width: i32,
+    /// Alto en filas.
     pub height: i32,
 }
 
 /// Cable de la salida `from_row` de `from` a la entrada `to_row` de `to`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edge {
+    /// Índice del nodo de origen.
     pub from: usize,
+    /// Fila del puerto de salida, relativa al borde superior de `from`.
     pub from_row: i32,
+    /// Índice del nodo de destino.
     pub to: usize,
+    /// Fila del puerto de entrada, relativa al borde superior de `to`.
     pub to_row: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Separaciones mínimas del dibujo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Spacing {
     /// Filas libres entre dos nodos de una misma capa.
     pub node: i32,
@@ -59,7 +68,8 @@ pub struct Spacing {
     pub layer: i32,
 }
 
-#[derive(Debug, Clone)]
+/// Resultado del layout, indexado como los nodos y cables de entrada.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
     /// Esquina superior izquierda de cada nodo.
     pub nodes: Vec<Pos>,
@@ -72,7 +82,11 @@ pub struct Placement {
 #[non_exhaustive]
 pub enum LayoutError {
     /// El cable `edge` apunta a un nodo inexistente o a una fila fuera de su nodo.
-    PortOutOfNode { edge: usize },
+    /// El cable `edge` apunta a un nodo inexistente o a una fila fuera de su nodo.
+    PortOutOfNode {
+        /// Índice del cable en la entrada.
+        edge: usize,
+    },
     /// Los cables forman un ciclo dirigido (hay que cortarlo antes).
     Cycle,
     /// Las restricciones de posición vertical no tienen solución.
@@ -116,6 +130,11 @@ struct Segment {
 }
 
 /// Los cables deben formar un grafo sin ciclos (la normalización corta los lazos).
+///
+/// # Errors
+///
+/// [`LayoutError`] si un cable apunta fuera de su nodo, si hay un ciclo o si el
+/// dibujo excedería [`MAX_EXTENT`].
 pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Placement> {
     let spacing = *spacing;
     if nodes.iter().any(|n| n.width < 0 || n.height < 1) {

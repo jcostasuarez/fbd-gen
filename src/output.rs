@@ -9,57 +9,91 @@ use crate::layout::{Layout, coord};
 use crate::model::{Dir, GeneratedVar, Param, Section};
 use crate::xml::escape as esc;
 
-#[derive(Debug, Clone, Serialize)]
+/// Sección posicionada: lo que contiene `.layout.json`, en celdas de grilla.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutSection {
+    /// Nombre de la sección.
     pub name: String,
+    /// Ancho de la hoja, margen incluido.
     pub width: i32,
+    /// Alto de la hoja, margen incluido.
     pub height: i32,
+    /// Bloques en el orden del modelo.
     pub blocks: Vec<OutBlock>,
+    /// Cables con su recorrido.
     pub links: Vec<OutLink>,
+    /// Comentarios de red.
     pub text_boxes: Vec<OutText>,
+    /// Variables que reemplazan cables.
     pub generated_variables: Vec<GeneratedVar>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Bloque posicionado.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OutBlock {
+    /// Identificador del bloque en el grafo de entrada.
     pub id: String,
+    /// Tipo de bloque.
     #[serde(rename = "type")]
     pub ty: String,
+    /// Nombre de la instancia, si es EFB/DFB.
     pub instance: Option<String>,
+    /// Índice de la red (componente conexa) a la que pertenece.
     pub network: usize,
+    /// Columna de la esquina superior izquierda (`posX` en Control Expert).
     pub x: i32,
+    /// Fila de la esquina superior izquierda (`posY` en Control Expert).
     pub y: i32,
+    /// Ancho en celdas.
     pub width: u32,
+    /// Alto en celdas.
     pub height: u32,
+    /// Pines con su fila y los parámetros escritos junto a ellos.
     pub pins: Vec<OutPin>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Pin posicionado.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutPin {
+    /// Nombre del pin.
     pub name: String,
+    /// Dirección.
     pub dir: Dir,
+    /// Fila relativa a la esquina superior del bloque.
     pub row: u32,
+    /// Variable o literal escrito del lado izquierdo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub param_in: Option<Param>,
+    /// Variable escrita del lado derecho.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub param_out: Option<Param>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Comentario de red (textBox).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OutText {
+    /// Texto del comentario.
     pub text: String,
+    /// Columna de la esquina superior izquierda.
     pub x: i32,
+    /// Fila de la esquina superior izquierda.
     pub y: i32,
+    /// Ancho en celdas.
     pub width: i32,
+    /// Alto en celdas.
     pub height: i32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Cable entre dos pines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OutLink {
+    /// Pin de origen, como `bloque.PIN`.
     pub from: String,
+    /// Pin de destino, como `bloque.PIN`.
     pub to: String,
+    /// Polilínea ortogonal `[x, y]`, del pin de origen al de destino.
     pub points: Vec<[i32; 2]>,
 }
 
@@ -202,7 +236,7 @@ pub(crate) fn to_svg(section: &Section, layout: &Layout) -> String {
             x1 - x0,
             y1 - y0
         );
-        let cx = (x0 + x1) / 2;
+        let cx = i32::midpoint(x0, x1);
         let _ = writeln!(
             s,
             r#"<text x="{cx}" y="{}" text-anchor="middle" font-weight="bold">{}</text>"#,

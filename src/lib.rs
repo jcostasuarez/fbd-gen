@@ -11,7 +11,8 @@
 //! ```no_run
 //! use fbd_gen::{Generator, ProgramSpec};
 //!
-//! let generator = Generator::embedded()?;
+//! // Con el feature `embedded-library`, `Generator::embedded()` evita leer el archivo.
+//! let generator = Generator::from_library_file("efb_dimensions.json")?;
 //! let json = std::fs::read_to_string("examples/planta_bombas.json")?;
 //! let spec: ProgramSpec = serde_json::from_str(&json)?;
 //! let program = generator.generate_program(&spec)?;

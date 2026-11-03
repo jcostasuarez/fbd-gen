@@ -356,6 +356,7 @@ fn cli_accepts_custom_dfb_catalog_and_preserves_the_manifest_format() {
 }
 
 #[test]
+#[cfg(feature = "embedded-library")]
 fn programs_write_the_same_files_as_the_cli() {
     let json = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/planta_bombas.json"),

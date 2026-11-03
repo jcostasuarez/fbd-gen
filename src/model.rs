@@ -31,9 +31,10 @@ use crate::library::Kind;
 ///
 /// Cada extremo de un link es `bloque.PIN`, un literal IEC (`TRUE`, `5`, `T#5s`,
 /// `16#FF`, `'texto'`) o, si no es ninguna de las dos cosas, una variable.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProgramSpec {
+    /// Nombre del programa: identificador IEC.
     pub name: String,
     /// Tarea dueña de la sección (MAST por defecto).
     #[serde(default = "default_task")]
@@ -41,9 +42,12 @@ pub struct ProgramSpec {
     /// Declaraciones explícitas. Las variables no declaradas se tipan por inferencia.
     #[serde(default)]
     pub variables: Vec<VarSpec>,
+    /// Bloques del programa.
     pub blocks: Vec<BlockSpec>,
+    /// Conexiones: cada extremo es `bloque.PIN`, un literal IEC o una variable.
     #[serde(default)]
     pub links: Vec<LinkSpec>,
+    /// Criterios para dividir el programa en secciones.
     #[serde(default)]
     pub partition: PartitionSpec,
     /// Comentarios de red: cada uno se dibuja como encabezado (textBox) de la red que
@@ -53,6 +57,7 @@ pub struct ProgramSpec {
 }
 
 impl ProgramSpec {
+    /// Programa `name` vacío, en la tarea MAST y con la partición por defecto.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -66,16 +71,18 @@ impl ProgramSpec {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Comentario de red.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommentSpec {
     /// Id de un bloque de la red comentada.
     pub at: String,
+    /// Texto del comentario.
     pub text: String,
 }
 
 /// Criterios de partición en secciones (etapa 4).
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PartitionSpec {
     /// Además del equipo (`group`), separar por etapa del flujo de señal (`stage`).
@@ -97,19 +104,25 @@ pub(crate) fn default_task() -> String {
     "MAST".into()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Declaración de una variable.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VarSpec {
+    /// Nombre: identificador IEC.
     pub name: String,
+    /// Tipo IEC (`BOOL`, `INT`, `TIME`...) o DDT.
     #[serde(rename = "type")]
     pub ty: String,
     /// Dirección topológica (`%MW100`, `%I0.1.2`...).
     pub address: Option<String>,
+    /// Comentario de la declaración.
     pub comment: Option<String>,
+    /// Valor inicial, como literal IEC.
     pub init: Option<String>,
 }
 
 impl VarSpec {
+    /// Variable `name` de tipo `ty`, sin dirección, comentario ni valor inicial.
     pub fn new(name: impl Into<String>, ty: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -121,10 +134,13 @@ impl VarSpec {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Instancia o llamada a un bloque del catálogo.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockSpec {
+    /// Identificador del bloque dentro del grafo; los links lo usan como `id.PIN`.
     pub id: String,
+    /// Tipo de bloque del catálogo (`TON`, `AND`, una DFB registrada...).
     #[serde(rename = "type")]
     pub ty: String,
     /// Nombre de instancia (EFB/DFB). Si falta se usa el `id`.
@@ -141,6 +157,7 @@ pub struct BlockSpec {
 }
 
 impl BlockSpec {
+    /// Bloque `id` de tipo `ty`, sin opciones.
     pub fn new(id: impl Into<String>, ty: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -154,15 +171,24 @@ impl BlockSpec {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Conexión entre dos extremos: `bloque.PIN`, literal IEC o variable.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(untagged, deny_unknown_fields)]
 #[non_exhaustive]
 pub enum LinkSpec {
+    /// `[origen, destino]`, la forma compacta.
     Pair(String, String),
-    Object { from: String, to: String },
+    /// `{ "from": origen, "to": destino }`.
+    Object {
+        /// Origen.
+        from: String,
+        /// Destino.
+        to: String,
+    },
 }
 
 impl LinkSpec {
+    /// Extremos `(origen, destino)`.
     pub fn ends(&self) -> (&str, &str) {
         match self {
             LinkSpec::Pair(a, b) => (a, b),
@@ -175,21 +201,27 @@ impl LinkSpec {
 // Sección resuelta
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Dirección de un pin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[expect(
     clippy::exhaustive_enums,
     reason = "las tres direcciones de pin de la IEC 61131-3"
 )]
 pub enum Dir {
+    /// Entrada.
     In,
+    /// Salida.
     Out,
+    /// Entrada y salida a la vez (IN_OUT).
     InOut,
 }
 
 impl Dir {
+    /// Si el pin se dibuja del lado izquierdo (entradas e IN_OUT).
     pub fn has_left(self) -> bool {
         matches!(self, Dir::In | Dir::InOut)
     }
+    /// Si el pin se dibuja del lado derecho (salidas e IN_OUT).
     pub fn has_right(self) -> bool {
         matches!(self, Dir::Out | Dir::InOut)
     }
@@ -197,15 +229,18 @@ impl Dir {
 
 /// Parámetro actual escrito junto a un pin (Control Expert no dibuja variables como
 /// objetos en FBD: son texto pegado al pin).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum Param {
+    /// Variable.
     Var(String),
+    /// Literal IEC.
     Lit(String),
 }
 
 impl Param {
+    /// Texto tal como se escribe junto al pin.
     pub fn text(&self) -> &str {
         match self {
             Param::Var(s) | Param::Lit(s) => s,
@@ -272,11 +307,15 @@ pub(crate) struct Wire {
     pub to: PinRef,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Variable que el generador declaró para reemplazar un cable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GeneratedVar {
+    /// Nombre de la variable.
     pub name: String,
+    /// Tipo IEC inferido.
     #[serde(rename = "type")]
     pub ty: String,
+    /// Por qué se generó: fan-out, realimentación o cruce entre secciones.
     pub reason: String,
 }
 
@@ -312,15 +351,19 @@ impl Section {
 // Diagnósticos
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Gravedad de un diagnóstico.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[expect(
     clippy::exhaustive_enums,
     reason = "gravedad estable: error, aviso, información"
 )]
 pub enum Level {
+    /// La entrada es inválida: no se genera nada.
     Error,
+    /// Se generó, pero conviene revisarlo.
     Warning,
+    /// Decisión informativa del generador.
     Info,
 }
 
@@ -329,15 +372,22 @@ pub enum Level {
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum Stage {
+    /// Validación del grafo contra la librería.
     Validate,
+    /// Inferencia y chequeo de tipos.
     Types,
+    /// Consistencia entre equipos.
     Consistency,
+    /// Partición en secciones y su orden.
     Partition,
+    /// Normalización: fan-out y realimentaciones.
     Normalize,
+    /// Layout y validación de la grilla.
     Layout,
 }
 
 impl Stage {
+    /// Nombre en minúsculas, igual que al serializar.
     pub fn as_str(self) -> &'static str {
         match self {
             Stage::Validate => "validate",
@@ -356,10 +406,14 @@ impl std::fmt::Display for Stage {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Mensaje del generador sobre la entrada o sobre una decisión tomada.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
+    /// Gravedad.
     pub level: Level,
+    /// Etapa que lo emitió.
     pub stage: Stage,
+    /// Texto para el usuario.
     pub message: String,
 }
 

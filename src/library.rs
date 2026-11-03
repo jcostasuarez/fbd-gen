@@ -10,15 +10,18 @@ mod registry;
 pub use registry::LibraryError;
 
 /// Tipo de bloque de la IEC 61131-3 tal como lo clasifica Control Expert.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[expect(
     clippy::exhaustive_enums,
     reason = "EF, EFB y DFB son las tres clases de bloque de Control Expert"
 )]
 pub enum Kind {
+    /// Función elemental: sin estado ni instancia.
     Ef,
+    /// Bloque de función elemental: tiene estado y se instancia con nombre.
     Efb,
+    /// Bloque de función derivado, definido por el usuario en Control Expert.
     Dfb,
 }
 
@@ -29,17 +32,22 @@ impl Kind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Entrada extensible (`IN1`, `IN2`...): una EF como `AND` acepta de `min` a `max` pines.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Extensible {
+    /// Cantidad mínima de pines de la extensión.
     pub min: u32,
+    /// Cantidad máxima de pines de la extensión.
     pub max: u32,
     /// `IN1` -> prefijo `IN`, primer índice 1; `IN0` -> `IN`, 0.
     pub prefix: String,
+    /// Índice del primer pin de la extensión.
     pub first_index: u32,
 }
 
 impl Extensible {
+    /// Nombre del pin `k` (desde 0) de la extensión: `IN` y 1 dan `IN1`, `IN2`...
     pub fn pin_name(&self, k: u32) -> String {
         format!("{}{}", self.prefix, self.first_index + k)
     }
@@ -58,31 +66,43 @@ impl Extensible {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Pin de la interfaz de un bloque.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PinDef {
+    /// Nombre del pin, único en el bloque sin distinguir mayúsculas.
     pub name: String,
+    /// Tipo IEC (`BOOL`, `INT`, `ANY_NUM`...) o DDT.
     #[serde(rename = "type")]
     pub ty: String,
     /// Posición en su lado (1 = arriba). `None` = pin sin representación gráfica.
     pub position: Option<u32>,
+    /// Si el pin es la primera entrada de una extensión.
     pub extensible: Option<Extensible>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Interfaz y geometría de una EF/EFB/DFB: lo necesario para instanciarla y dibujarla.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockDef {
+    /// Nombre del tipo de bloque (`TON`, `AND`, `MotorPropio`...).
     pub name: String,
+    /// Clase de bloque: EF, EFB o DFB.
     pub kind: Kind,
+    /// Función genérica de la que esta es una variante tipada (`ADD` para `ADD_REAL`).
     pub typed_variant_of: Option<String>,
+    /// Entradas, del lado izquierdo.
     #[serde(default)]
     pub inputs: Vec<PinDef>,
+    /// Salidas, del lado derecho.
     #[serde(default)]
     pub outputs: Vec<PinDef>,
+    /// Pines IN_OUT: ocupan su posición en ambos lados.
     #[serde(default)]
     pub in_outs: Vec<PinDef>,
     /// Ancho en celdas de grilla (medido o estimado).
     pub width: u32,
+    /// Si Control Expert midió el ancho; si no, es una estimación.
     #[serde(default = "measured_width")]
     pub width_measured: bool,
 }
@@ -106,12 +126,18 @@ impl BlockDef {
     }
 }
 
+/// Catálogo de bloques indexado por nombre, sin distinguir mayúsculas.
 #[derive(Debug, Clone, Default)]
 pub struct Library {
     blocks: HashMap<String, BlockDef>,
 }
 
 impl Library {
+    /// Carga la librería exportada de Control Expert desde `path`.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Io`] si no se puede leer; además los de [`Library::from_json_str`].
     pub fn load(path: impl AsRef<Path>) -> Result<Self, LibraryError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|source| LibraryError::Io {
@@ -124,6 +150,12 @@ impl Library {
     /// Carga la librería desde el JSON ya leído (mismo formato que `efb_dimensions.json`).
     /// Cada bloque pasa por las mismas validaciones que uno registrado con
     /// [`Library::register`], y un nombre repetido es un error.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Json`] si el texto no tiene el formato esperado,
+    /// [`LibraryError::InvalidDefinition`] si un bloque es inválido y
+    /// [`LibraryError::DuplicateBlock`] si un nombre se repite.
     pub fn from_json_str(text: &str) -> Result<Self, LibraryError> {
         let raw: RawLibrary = serde_json::from_str(text).map_err(LibraryError::Json)?;
         let definitions = raw
@@ -138,6 +170,11 @@ impl Library {
 
     /// La librería de Control Expert 15.1 incluida en el binario (feature `embedded-library`).
     /// Se lee una sola vez por proceso; cada llamada devuelve una copia propia.
+    ///
+    /// # Errors
+    ///
+    /// Solo si la librería incluida no pasa la validación: un `efb_dimensions.json`
+    /// corrupto al compilar el crate.
     #[cfg(feature = "embedded-library")]
     pub fn embedded() -> Result<Self, LibraryError> {
         static EMBEDDED: std::sync::OnceLock<Library> = std::sync::OnceLock::new();
@@ -148,14 +185,17 @@ impl Library {
         Ok(EMBEDDED.get_or_init(|| library).clone())
     }
 
+    /// Definición del bloque `name`, sin distinguir mayúsculas.
     pub fn get(&self, name: &str) -> Option<&BlockDef> {
         self.blocks.get(&name.to_ascii_uppercase())
     }
 
+    /// Cantidad de bloques del catálogo.
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
 
+    /// Si el catálogo no tiene bloques.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
