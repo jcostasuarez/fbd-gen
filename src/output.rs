@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
-use crate::layout::Layout;
-use crate::model::*;
+use crate::layout::{Layout, coord};
+use crate::model::{Dir, GeneratedVar, Param, Section};
 use crate::xml::escape as esc;
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +63,7 @@ pub struct OutLink {
     pub points: Vec<[i32; 2]>,
 }
 
-pub fn to_output(section: &Section, nets: &[Vec<usize>], layout: &Layout) -> OutSection {
+pub(crate) fn to_output(section: &Section, nets: &[Vec<usize>], layout: &Layout) -> OutSection {
     let mut network_of = vec![0; section.blocks.len()];
     for (n, members) in nets.iter().enumerate() {
         for &b in members {
@@ -127,7 +127,7 @@ pub fn to_output(section: &Section, nets: &[Vec<usize>], layout: &Layout) -> Out
 
 const C: i32 = 12; // píxeles por celda en la vista previa
 
-pub fn to_svg(section: &Section, layout: &Layout) -> String {
+pub(crate) fn to_svg(section: &Section, layout: &Layout) -> String {
     let margin = 2 * C;
     let (w, h) = (
         layout.width * C + 2 * margin,
@@ -167,15 +167,15 @@ pub fn to_svg(section: &Section, layout: &Layout) -> String {
             t.height * C
         );
         // Ajuste de línea aproximado, como lo hace el editor dentro de la caja.
-        let per_line = ((t.width * C - 8) / 6).max(1) as usize;
+        let per_line = usize::try_from((t.width * C - 8) / 6).map_or(1, |n| n.max(1));
         let chars: Vec<char> = t.text.chars().collect();
-        for (i, line) in chars.chunks(per_line).enumerate() {
+        let baselines = (t.y * C + 11..).step_by(11);
+        for (line, y) in chars.chunks(per_line).zip(baselines) {
             let line: String = line.iter().collect();
             let _ = writeln!(
                 s,
-                r##"<text x="{}" y="{}" fill="#7d4e00">{}</text>"##,
+                r##"<text x="{}" y="{y}" fill="#7d4e00">{}</text>"##,
                 t.x * C + 4,
-                t.y * C + 11 + i as i32 * 11,
                 esc(&line)
             );
         }
@@ -194,8 +194,8 @@ pub fn to_svg(section: &Section, layout: &Layout) -> String {
     }
 
     for (b, pos) in section.blocks.iter().zip(&layout.blocks) {
-        let (x0, x1) = (pos.x * C, (pos.x + b.width as i32 - 1) * C);
-        let (y0, y1) = ((pos.y + 2) * C, (pos.y + b.height as i32) * C);
+        let (x0, x1) = (pos.x * C, (pos.x + coord(b.width) - 1) * C);
+        let (y0, y1) = ((pos.y + 2) * C, (pos.y + coord(b.height)) * C);
         let _ = writeln!(
             s,
             r##"<rect x="{x0}" y="{y0}" width="{}" height="{}" fill="#f6f8fa" stroke="#24292f"/>"##,
@@ -205,7 +205,7 @@ pub fn to_svg(section: &Section, layout: &Layout) -> String {
         let cx = (x0 + x1) / 2;
         let _ = writeln!(
             s,
-            r##"<text x="{cx}" y="{}" text-anchor="middle" font-weight="bold">{}</text>"##,
+            r#"<text x="{cx}" y="{}" text-anchor="middle" font-weight="bold">{}</text>"#,
             y0 + C - 2,
             esc(&b.ty)
         );
@@ -218,11 +218,11 @@ pub fn to_svg(section: &Section, layout: &Layout) -> String {
             );
         }
         for p in &b.pins {
-            let py = (pos.y + p.row as i32) * C;
+            let py = (pos.y + coord(p.row)) * C;
             if p.dir.has_left() {
                 let _ = writeln!(
                     s,
-                    r##"<text x="{}" y="{}">{}</text>"##,
+                    r#"<text x="{}" y="{}">{}</text>"#,
                     x0 + 3,
                     py + 3,
                     esc(&p.name)
@@ -231,7 +231,7 @@ pub fn to_svg(section: &Section, layout: &Layout) -> String {
             if p.dir.has_right() {
                 let _ = writeln!(
                     s,
-                    r##"<text x="{}" y="{}" text-anchor="end">{}</text>"##,
+                    r#"<text x="{}" y="{}" text-anchor="end">{}</text>"#,
                     x1 - 3,
                     py + 3,
                     esc(&p.name)

@@ -1,3 +1,11 @@
+//! CLI de fbd-gen: lee un grafo semántico, escribe las secciones en `<out-dir>/<programa>/`
+//! e informa los diagnósticos por stderr.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "la salida de la CLI es su interfaz: rutas por stdout, diagnósticos por stderr"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

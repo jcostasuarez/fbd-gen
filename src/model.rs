@@ -156,6 +156,7 @@ impl BlockSpec {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged, deny_unknown_fields)]
+#[non_exhaustive]
 pub enum LinkSpec {
     Pair(String, String),
     Object { from: String, to: String },
@@ -175,6 +176,10 @@ impl LinkSpec {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "las tres direcciones de pin de la IEC 61131-3"
+)]
 pub enum Dir {
     In,
     Out,
@@ -194,6 +199,7 @@ impl Dir {
 /// objetos en FBD: son texto pegado al pin).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Param {
     Var(String),
     Lit(String),
@@ -208,7 +214,7 @@ impl Param {
 }
 
 #[derive(Debug, Clone)]
-pub struct Pin {
+pub(crate) struct Pin {
     pub name: String,
     pub dir: Dir,
     pub ty: String,
@@ -226,7 +232,7 @@ pub struct Pin {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block {
+pub(crate) struct Block {
     pub id: String,
     pub ty: String,
     pub kind: Kind,
@@ -242,26 +248,26 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn pin_index(&self, name: &str) -> Option<usize> {
+    pub(crate) fn pin_index(&self, name: &str) -> Option<usize> {
         self.pins
             .iter()
             .position(|p| p.name.eq_ignore_ascii_case(name))
     }
 
     /// Nombre que identifica al bloque en la sección (instancia o id).
-    pub fn label(&self) -> &str {
+    pub(crate) fn label(&self) -> &str {
         self.instance.as_deref().unwrap_or(&self.id)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PinRef {
+pub(crate) struct PinRef {
     pub block: usize,
     pub pin: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Wire {
+pub(crate) struct Wire {
     pub from: PinRef,
     pub to: PinRef,
 }
@@ -275,7 +281,7 @@ pub struct GeneratedVar {
 }
 
 #[derive(Debug, Clone)]
-pub struct Section {
+pub(crate) struct Section {
     pub name: String,
     pub blocks: Vec<Block>,
     pub wires: Vec<Wire>,
@@ -288,15 +294,15 @@ pub struct Section {
 }
 
 impl Section {
-    pub fn pin(&self, r: PinRef) -> &Pin {
+    pub(crate) fn pin(&self, r: PinRef) -> &Pin {
         &self.blocks[r.block].pins[r.pin]
     }
 
-    pub fn pin_mut(&mut self, r: PinRef) -> &mut Pin {
+    pub(crate) fn pin_mut(&mut self, r: PinRef) -> &mut Pin {
         &mut self.blocks[r.block].pins[r.pin]
     }
 
-    pub fn pin_path(&self, r: PinRef) -> String {
+    pub(crate) fn pin_path(&self, r: PinRef) -> String {
         let b = &self.blocks[r.block];
         format!("{}.{}", b.id, b.pins[r.pin].name)
     }
@@ -308,6 +314,10 @@ impl Section {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "gravedad estable: error, aviso, información"
+)]
 pub enum Level {
     Error,
     Warning,
@@ -354,10 +364,10 @@ pub struct Diagnostic {
 }
 
 #[derive(Debug, Default)]
-pub struct Diagnostics(pub Vec<Diagnostic>);
+pub(crate) struct Diagnostics(pub Vec<Diagnostic>);
 
 impl Diagnostics {
-    pub fn push(&mut self, level: Level, stage: Stage, message: impl Into<String>) {
+    pub(crate) fn push(&mut self, level: Level, stage: Stage, message: impl Into<String>) {
         self.0.push(Diagnostic {
             level,
             stage,
@@ -365,7 +375,7 @@ impl Diagnostics {
         });
     }
 
-    pub fn has_errors(&self) -> bool {
+    pub(crate) fn has_errors(&self) -> bool {
         self.0.iter().any(|d| d.level == Level::Error)
     }
 }

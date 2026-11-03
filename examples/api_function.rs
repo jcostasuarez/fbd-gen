@@ -1,3 +1,12 @@
+//! Genera una única llamada a un TON con `Generator::generate_function`.
+//!
+//! `cargo run --example api_function`: el XML va a stdout y el resumen a stderr.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "el ejemplo muestra su resultado en la terminal"
+)]
+
 use fbd_gen::{FunctionCallSpec, Generator};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

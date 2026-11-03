@@ -612,11 +612,11 @@ fn sheet_beyond_the_extent_cap_is_a_layout_error() {
     );
     s.comments = vec![CommentSpec {
         at: "n".into(),
-        text: "x".repeat(2 * crate::sugiyama::MAX_EXTENT as usize),
+        text: "x".repeat(2 * usize::try_from(crate::sugiyama::MAX_EXTENT).expect("MAX_EXTENT > 0")),
     }];
     match generator.generate_program(&s) {
         Err(crate::GenerationError::Layout { source, .. }) => {
-            assert!(source.to_string().contains("excede"), "{source}")
+            assert!(source.to_string().contains("excede"), "{source}");
         }
         Err(other) => panic!("se esperaba un error de layout: {other}"),
         Ok(result) => panic!(

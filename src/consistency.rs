@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
-use crate::model::*;
+use crate::model::{Diagnostics, Level, Param, PinRef, Section, Stage};
 
 const STAGE: Stage = Stage::Consistency;
 
@@ -76,7 +76,6 @@ struct GroupGraph {
 }
 
 fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> GroupGraph {
-    let local: HashMap<usize, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     // Contexto de cada pin: cable interno (vecino), externo, variable, literal o nada.
     enum Ctx {
         Wire(usize, String),
@@ -85,6 +84,7 @@ fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> Grou
         Lit,
         Free,
     }
+    let local: HashMap<usize, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     let mut ctx: Vec<Vec<(String, Ctx)>> = Vec::new();
     let mut var_roles = BTreeSet::new();
     let mut block_types = BTreeMap::new();
@@ -172,7 +172,9 @@ fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> Grou
     GroupGraph {
         name: name.to_string(),
         blocks: blocks.to_vec(),
-        hash: h(features.last().unwrap()),
+        hash: h(features
+            .last()
+            .expect("features empieza con las etiquetas iniciales")),
         labels,
         features,
         block_types,
@@ -208,10 +210,15 @@ fn jaccard(a: &[u64], b: &[u64]) -> f64 {
     }
     let union = a.len() + b.len() - inter;
     if union == 0 {
-        1.0
-    } else {
-        inter as f64 / union as f64
+        return 1.0;
     }
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_precision_loss,
+        reason = "conteos de etiquetas de un grupo, muy por debajo de 2^52"
+    )]
+    let ratio = inter as f64 / union as f64;
+    ratio
 }
 
 fn describe_diff(g: &GroupGraph, typical: &GroupGraph) -> String {
@@ -294,9 +301,12 @@ fn literal_outliers(section: &Section, members: &[&GroupGraph], diags: &mut Diag
             .iter()
             .max_by_key(|(_, n)| **n)
             .map(|(v, n)| (v.clone(), *n))
-            .unwrap();
+            .expect("hay al menos dos valores distintos");
         // Para mostrar, los valores tal como los escribió un equipo de la mayoría.
-        let shown = per_group.values().find(|v| key(v) == majority).unwrap();
+        let shown = per_group
+            .values()
+            .find(|v| key(v) == majority)
+            .expect("la mayoría sale de los valores de los grupos");
         let shown: Vec<&str> = shown.iter().map(|x| x.0.as_str()).collect();
         if n * 2 <= per_group.len() {
             let names: Vec<&str> = per_group
@@ -335,7 +345,7 @@ fn literal_outliers(section: &Section, members: &[&GroupGraph], diags: &mut Diag
     }
 }
 
-pub fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics) {
+pub(crate) fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diagnostics) {
     let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, b) in section.blocks.iter().enumerate() {
         if let Some(g) = &b.group {

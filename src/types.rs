@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::graph::UnionFind;
 use crate::iec::{is_literal, var_root};
 use crate::library::Kind;
-use crate::model::*;
+use crate::model::{Diagnostics, Level, Param, PinRef, Section, Stage, VarSpec};
 
 const STAGE: Stage = Stage::Types;
 
@@ -187,7 +187,7 @@ struct Strong {
 
 /// Una variable de la sección con su tipo final, en orden de primera aparición.
 #[derive(Debug, Clone)]
-pub struct TypedVar {
+pub(crate) struct TypedVar {
     pub name: String,
     pub ty: String,
     pub decl: Option<VarSpec>,
@@ -196,7 +196,7 @@ pub struct TypedVar {
 /// Tipa las variables de la sección y deja en cada pin su tipo concreto
 /// ([`Pin::inferred`]). Corre una sola vez, sobre el grafo completo: la partición y la
 /// normalización solo copian esos tipos.
-pub fn infer(
+pub(crate) fn infer(
     section: &mut Section,
     declared: &[VarSpec],
     diags: &mut Diagnostics,
@@ -429,7 +429,7 @@ pub fn infer(
 /// orden del `dataBlock`). El tipo y la declaración salen de `known` (las variables del
 /// programa y las de enlace entre secciones) o de las variables que creó la
 /// normalización; el nombre se escribe como aparece en la sección.
-pub fn section_vars(
+pub(crate) fn section_vars(
     section: &Section,
     known: &HashMap<String, TypedVar>,
     diags: &mut Diagnostics,

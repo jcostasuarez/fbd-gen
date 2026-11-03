@@ -9,8 +9,13 @@ use serde::{Deserialize, Serialize};
 mod registry;
 pub use registry::LibraryError;
 
+/// Tipo de bloque de la IEC 61131-3 tal como lo clasifica Control Expert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "EF, EFB y DFB son las tres clases de bloque de Control Expert"
+)]
 pub enum Kind {
     Ef,
     Efb,
@@ -162,15 +167,18 @@ impl Library {
 /// Se calcula en enteros: 5 celdas cada 8 caracteres de nombre de pin.
 fn estimate_width(name: &str, inputs: &[RawPin], outputs: &[RawPin], in_outs: &[RawPin]) -> u32 {
     let longest = |pins: &mut dyn Iterator<Item = &RawPin>| {
-        pins.map(|p| p.name.chars().count() as u32)
-            .max()
-            .unwrap_or(0)
+        pins.map(|p| char_count(&p.name)).max().unwrap_or(0)
     };
     let left = longest(&mut inputs.iter().chain(in_outs));
     let right = longest(&mut outputs.iter().chain(in_outs));
-    let by_pins = (left * 5).div_ceil(8) + (right * 5).div_ceil(8) + 2;
-    let by_name = name.chars().count() as u32 + 4;
+    let by_pins = left.saturating_mul(5).div_ceil(8) + right.saturating_mul(5).div_ceil(8) + 2;
+    let by_name = char_count(name).saturating_add(4);
     by_pins.max(by_name).max(7)
+}
+
+/// Caracteres de un nombre; uno absurdo satura y la validación de ancho lo rechaza.
+fn char_count(name: &str) -> u32 {
+    u32::try_from(name.chars().count()).unwrap_or(u32::MAX)
 }
 
 #[derive(Deserialize)]
@@ -257,7 +265,7 @@ impl RawPin {
                 .name
                 .chars()
                 .rev()
-                .take_while(|c| c.is_ascii_digit())
+                .take_while(char::is_ascii_digit)
                 .count();
             let (prefix, idx) = self.name.split_at(self.name.len() - digits);
             Extensible {

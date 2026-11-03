@@ -55,21 +55,25 @@ impl FunctionCallSpec {
         }
     }
 
+    #[must_use]
     pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
         self.instance = Some(instance.into());
         self
     }
 
+    #[must_use]
     pub fn input(mut self, pin: impl Into<String>, value: impl Into<String>) -> Self {
         self.inputs.insert(pin.into(), value.into());
         self
     }
 
+    #[must_use]
     pub fn output(mut self, pin: impl Into<String>, variable: impl Into<String>) -> Self {
         self.outputs.insert(pin.into(), variable.into());
         self
     }
 
+    #[must_use]
     pub fn in_out(mut self, pin: impl Into<String>, variable: impl Into<String>) -> Self {
         self.in_outs.insert(pin.into(), variable.into());
         self

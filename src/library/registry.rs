@@ -11,7 +11,7 @@ use crate::iec::is_identifier as identifier;
 /// Tope del ancho de un bloque y de la última fila de sus pines, en celdas. La librería
 /// de Control Expert 15.1 llega a 20 de ancho y a la posición 34: el tope solo descarta
 /// definiciones absurdas, que harían desbordar las cuentas enteras del layout.
-pub const MAX_BLOCK_CELLS: u32 = 1000;
+pub(super) const MAX_BLOCK_CELLS: u32 = 1000;
 
 /// Errores de lectura y registro del catálogo, sin reemplazos implícitos.
 #[derive(Debug)]
@@ -70,6 +70,7 @@ impl BlockDef {
     }
 
     /// `position` empieza en 1. La fila de grilla incluye además la cabecera del bloque.
+    #[must_use]
     pub fn input(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
         self.inputs.push(PinDef {
             name: name.into(),
@@ -80,6 +81,7 @@ impl BlockDef {
         self
     }
 
+    #[must_use]
     pub fn output(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
         self.outputs.push(PinDef {
             name: name.into(),
@@ -90,6 +92,7 @@ impl BlockDef {
         self
     }
 
+    #[must_use]
     pub fn in_out(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
         self.in_outs.push(PinDef {
             name: name.into(),

@@ -5,18 +5,21 @@ use std::collections::{HashMap, HashSet};
 
 use crate::iec::{is_address, is_identifier, is_literal, is_variable_ref, task_name, var_root};
 use crate::library::{BlockDef, Library};
-use crate::model::*;
+use crate::model::{
+    Block, BlockSpec, Diagnostics, Dir, Level, Param, Pin, PinRef, ProgramSpec, Section, Stage,
+    Wire,
+};
 use crate::xml;
 
 const STAGE: Stage = Stage::Validate;
 
-pub enum Endpoint {
+pub(crate) enum Endpoint {
     Pin { block: usize, pin: String },
     Var(String),
     Lit(String),
 }
 
-pub fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
+pub(crate) fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint {
     let s = s.trim();
     if let Some((id, pin)) = s.split_once('.')
         && let Some(&block) = ids.get(&id.to_ascii_uppercase())
@@ -61,7 +64,10 @@ fn build_block(
     let mut ext = extensible_count(def, spec.inputs, referenced);
     let mut extra_pins = 0;
     if let Some((i, n)) = &mut ext {
-        let e = def.inputs[*i].extensible.as_ref().unwrap();
+        let e = def.inputs[*i]
+            .extensible
+            .as_ref()
+            .expect("`extensible_count` devuelve el índice del pin extensible");
         if *n > e.max {
             diags.push(
                 Level::Error,
@@ -146,7 +152,11 @@ fn check_xml_texts(spec: &ProgramSpec, diags: &mut Diagnostics) {
             diags.push(
                 Level::Error,
                 STAGE,
-                format!("{}: caracter U+{:04X} no admitido en XML", what(), c as u32),
+                format!(
+                    "{}: caracter U+{:04X} no admitido en XML",
+                    what(),
+                    u32::from(c)
+                ),
             );
         }
     };
@@ -179,7 +189,11 @@ fn check_xml_texts(spec: &ProgramSpec, diags: &mut Diagnostics) {
     }
 }
 
-pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Option<Section> {
+pub(crate) fn resolve(
+    spec: &ProgramSpec,
+    lib: &Library,
+    diags: &mut Diagnostics,
+) -> Option<Section> {
     // El nombre termina en la sección de Control Expert y en los archivos de salida.
     if !is_identifier(&spec.name) {
         diags.push(

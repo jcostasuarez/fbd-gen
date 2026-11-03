@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::graph::{OnCycle, UnionFind, topo_order};
 use crate::iec::{sanitize, unique_name};
-use crate::model::*;
+use crate::model::{Diagnostics, GeneratedVar, Level, Param, PinRef, Section, Stage, Wire};
 
 const STAGE: Stage = Stage::Normalize;
 
@@ -25,7 +25,7 @@ impl Default for NormalizeConfig {
     }
 }
 
-pub fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mut Diagnostics) {
+pub(crate) fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mut Diagnostics) {
     let mut names = existing_names(section);
 
     // Realimentaciones: un lazo no se puede cerrar con links. Se corta solo el cable que
@@ -191,7 +191,7 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
                 on_stack[v] = true;
             }
             if let Some(&u) = adj[v].get(i) {
-                call.last_mut().unwrap().1 += 1;
+                call.last_mut().expect("el tope de la pila es `(v, i)`").1 += 1;
                 if index[u] == usize::MAX {
                     call.push((u, 0));
                 } else if on_stack[u] {
@@ -220,7 +220,7 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
 
 /// Etapa 7: redes = componentes conexos por cables, ordenadas por las dependencias
 /// anteriores al corte de fan-out. Los empates respetan el orden del modelo.
-pub fn networks(section: &Section) -> Vec<Vec<usize>> {
+pub(crate) fn networks(section: &Section) -> Vec<Vec<usize>> {
     ordered_networks(section).expect("la normalización conserva las dependencias de ejecución")
 }
 

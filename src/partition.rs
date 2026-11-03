@@ -13,7 +13,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::graph::{OnCycle, topo_order as topo_order_of};
 use crate::iec::{sanitize, unique_name};
-use crate::model::*;
+use crate::model::{
+    Diagnostics, Level, Param, PartitionSpec, PinRef, Section, Stage, VarSpec, Wire,
+};
 use crate::types::TypedVar;
 
 const STAGE: Stage = Stage::Partition;
@@ -71,14 +73,14 @@ fn split(section: &Section, order: &[usize], max: usize) -> Vec<Vec<usize>> {
     let mut start = 0;
     for c in cuts.into_iter().chain([n]) {
         let mut chunk = order[start..c].to_vec();
-        chunk.sort();
+        chunk.sort_unstable();
         chunks.push(chunk);
         start = c;
     }
     chunks
 }
 
-pub struct Partition {
+pub(crate) struct Partition {
     /// Secciones en orden de ejecución: subgrafos ya resueltos y tipados, con los cables
     /// que cruzan secciones reemplazados por variables.
     pub sections: Vec<Section>,
@@ -88,7 +90,7 @@ pub struct Partition {
 
 /// Divide el programa resuelto y tipado (`types::infer` ya corrió: los pines tienen su
 /// tipo concreto). `vars` son las variables del programa, para no repetir sus nombres.
-pub fn partition(
+pub(crate) fn partition(
     section: &Section,
     cfg: &PartitionSpec,
     vars: &[TypedVar],
@@ -398,7 +400,14 @@ pub fn partition(
 
     let mut parts: Vec<Option<Section>> = parts.into_iter().map(Some).collect();
     Partition {
-        sections: order.iter().map(|&s| parts[s].take().unwrap()).collect(),
+        sections: order
+            .iter()
+            .map(|&s| {
+                parts[s]
+                    .take()
+                    .expect("cada sección aparece una vez en el orden")
+            })
+            .collect(),
         link_vars,
     }
 }

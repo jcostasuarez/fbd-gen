@@ -117,6 +117,7 @@ struct Segment {
 
 /// Los cables deben formar un grafo sin ciclos (la normalización corta los lazos).
 pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Placement> {
+    let spacing = *spacing;
     if nodes.iter().any(|n| n.width < 0 || n.height < 1) {
         return Err(LayoutError::TooLarge);
     }
@@ -145,8 +146,9 @@ pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Place
 ///   ocupado como mucho.
 /// - Horizontal: el ancho de cada capa más su canal, que usa a lo sumo dos columnas por
 ///   tramo.
-fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: &Spacing) -> Result<()> {
-    let (v, s) = (vertices.len() as i64, segments.len() as i64);
+fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: Spacing) -> Result<()> {
+    let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    let (v, s) = (count(vertices.len()), count(segments.len()));
     let node_gap = i64::from(spacing.node).abs().max(1);
     let layer_gap = i64::from(spacing.layer).abs();
     let delta = vertices
@@ -158,7 +160,7 @@ fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: &Spacing) ->
         + 1;
     let layers = vertices
         .iter()
-        .map(|x| x.layer as i64 + 1)
+        .map(|x| count(x.layer).saturating_add(1))
         .max()
         .unwrap_or(0);
     let widths: i64 = vertices.iter().map(|x| i64::from(x.width)).sum();
@@ -189,11 +191,15 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
     let Some(rank) = simplex::solve(nodes.len(), &arcs) else {
         return Err(LayoutError::Cycle);
     };
+    let rank: Vec<usize> = rank
+        .into_iter()
+        .map(|r| usize::try_from(r).expect("el simplex normaliza los rangos a partir de 0"))
+        .collect();
     let mut vertices: Vec<Vertex> = nodes
         .iter()
         .enumerate()
         .map(|(i, n)| Vertex {
-            layer: rank[i] as usize,
+            layer: rank[i],
             height: n.height,
             width: n.width,
             real: true,
@@ -203,7 +209,7 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
     let mut segments = Vec::new();
     for (i, e) in edges.iter().enumerate() {
         let (mut from, mut from_row) = (e.from, e.from_row);
-        for layer in rank[e.from] as usize + 1..rank[e.to] as usize {
+        for layer in rank[e.from] + 1..rank[e.to] {
             vertices.push(Vertex {
                 layer,
                 height: 1,
@@ -232,12 +238,12 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
     Ok((vertices, segments))
 }
 
-fn gap(a: &Vertex, b: &Vertex, spacing: &Spacing) -> i32 {
+fn gap(a: &Vertex, b: &Vertex, spacing: Spacing) -> i32 {
     if a.real && b.real { spacing.node } else { 1 }
 }
 
 /// Borde superior de cada vértice si la capa se apila en el orden dado.
-fn stacked(order: &[usize], vertices: &[Vertex], spacing: &Spacing, top: &mut [i32]) {
+fn stacked(order: &[usize], vertices: &[Vertex], spacing: Spacing, top: &mut [i32]) {
     let mut y = 0;
     for (k, &v) in order.iter().enumerate() {
         if k > 0 {
@@ -272,8 +278,8 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
         };
         for l in range {
             let fixed = if forward { l - 1 } else { l + 1 };
-            stacked(&layers[fixed], vertices, &spacing, &mut top);
-            stacked(&layers[l], vertices, &spacing, &mut top);
+            stacked(&layers[fixed], vertices, spacing, &mut top);
+            stacked(&layers[l], vertices, spacing, &mut top);
             // Borde superior deseado: el que alinea cada puerto con su vecino fijo.
             let mut sum = vec![(0i64, 0i64); vertices.len()];
             for s in segments {
@@ -283,13 +289,13 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
                     (s.from, s.from_row, s.to, s.to_row)
                 };
                 if vertices[free].layer == l && vertices[other].layer == fixed {
-                    sum[free].0 += (top[other] + other_row - own_row) as i64;
+                    sum[free].0 += i64::from(top[other] + other_row - own_row);
                     sum[free].1 += 1;
                 }
             }
             for &v in &layers[l] {
                 if sum[v].1 == 0 {
-                    sum[v] = (top[v] as i64, 1);
+                    sum[v] = (i64::from(top[v]), 1);
                 }
             }
             // Orden estable: los empates conservan el orden actual.
@@ -298,7 +304,7 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
         let c = crossings(&layers, vertices, segments);
         if c < best_crossings {
             best_crossings = c;
-            best = layers.clone();
+            best.clone_from(&layers);
         }
     }
     best
@@ -307,14 +313,14 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
 /// Cruces entre capas consecutivas: pares de tramos cuyos extremos (posición en la
 /// capa, fila del puerto) quedan en orden opuesto. Una misma salida no cruza consigo.
 fn crossings(layers: &[Vec<usize>], vertices: &[Vertex], segments: &[Segment]) -> usize {
+    // Por capa, los extremos (posición, fila) de cada tramo que sale de ella.
+    type Ends = ((usize, i32), (usize, i32));
     let mut pos = vec![0; vertices.len()];
     for layer in layers {
         for (k, &v) in layer.iter().enumerate() {
             pos[v] = k;
         }
     }
-    // Por capa, los extremos (posición, fila) de cada tramo que sale de ella.
-    type Ends = ((usize, i32), (usize, i32));
     let mut by_layer: Vec<Vec<Ends>> = vec![Vec::new(); layers.len()];
     for s in segments {
         by_layer[vertices[s.from].layer].push(((pos[s.from], s.from_row), (pos[s.to], s.to_row)));
@@ -337,7 +343,7 @@ fn place_vertically(
     vertices: &[Vertex],
     segments: &[Segment],
     layers: &[Vec<usize>],
-    spacing: &Spacing,
+    spacing: Spacing,
 ) -> Result<Vec<i32>> {
     let mut arcs = Vec::new();
     for layer in layers {
@@ -387,7 +393,7 @@ fn route(
     segments: &[Segment],
     layers: &[Vec<usize>],
     ys: &[i32],
-    spacing: &Spacing,
+    spacing: Spacing,
 ) -> Placement {
     let widths: Vec<i32> = layers
         .iter()

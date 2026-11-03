@@ -10,16 +10,18 @@ fn root() -> &'static Path {
 }
 
 fn generator() -> Generator {
-    let mut generator = Generator::from_library_file(root().join("efb_dimensions.json")).unwrap();
+    let mut generator = Generator::from_library_file(root().join("efb_dimensions.json"))
+        .expect("efb_dimensions.json es la librería del repositorio");
     generator
         .register_blocks_from_file(root().join("examples/custom_blocks.json"))
-        .unwrap();
+        .expect("custom_blocks.json es un catálogo válido");
     generator
 }
 
 fn example(name: &str) -> ProgramSpec {
-    let json = std::fs::read_to_string(root().join("examples").join(name)).unwrap();
-    serde_json::from_str(&json).unwrap()
+    let json = std::fs::read_to_string(root().join("examples").join(name))
+        .unwrap_or_else(|e| panic!("no se pudo leer examples/{name}: {e}"));
+    serde_json::from_str(&json).unwrap_or_else(|e| panic!("examples/{name} no es válido: {e}"))
 }
 
 fn assert_integer_grid(program: &GeneratedProgram) {
@@ -40,7 +42,10 @@ fn assert_integer_grid(program: &GeneratedProgram) {
         // Lo que lee Control Expert: cada posX/posY/width/height es un entero.
         for key in ["posX=\"", "posY=\"", "width=\"", "height=\""] {
             for (at, _) in s.xml.match_indices(key) {
-                let value = s.xml[at + key.len()..].split('"').next().unwrap();
+                let value = s.xml[at + key.len()..]
+                    .split('"')
+                    .next()
+                    .unwrap_or_default();
                 assert!(
                     value.parse::<i32>().is_ok_and(|v| v >= 0),
                     "{}: {key}{value}",

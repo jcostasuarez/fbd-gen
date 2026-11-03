@@ -6,7 +6,7 @@
 
 /// Restricción `λ(head) − λ(tail) ≥ delta`, con costo `weight` por unidad de largo.
 #[derive(Debug, Clone, Copy)]
-pub struct Arc {
+pub(super) struct Arc {
     pub tail: usize,
     pub head: usize,
     pub delta: i32,
@@ -15,7 +15,7 @@ pub struct Arc {
 
 /// Rangos óptimos de `n` nodos, con el mínimo de cada componente conexa en 0.
 /// `None` si las restricciones tienen un ciclo dirigido.
-pub fn solve(n: usize, arcs: &[Arc]) -> Option<Vec<i32>> {
+pub(super) fn solve(n: usize, arcs: &[Arc]) -> Option<Vec<i32>> {
     let mut rank = initial_ranks(n, arcs)?;
     let mut adj = vec![Vec::new(); n];
     for (i, a) in arcs.iter().enumerate() {
@@ -100,7 +100,7 @@ struct Tree {
     nodes: Vec<usize>,
     /// Arcos de la componente (los demás no se miran).
     arcs: Vec<usize>,
-    in_tree: Vec<bool>,
+    is_tree_arc: Vec<bool>,
     /// Arco al padre en el árbol enraizado (`usize::MAX` en la raíz).
     parent: Vec<usize>,
     depth: Vec<usize>,
@@ -118,7 +118,7 @@ impl Tree {
         rank: &mut [i32],
     ) -> Self {
         let n = adj.len();
-        let mut in_tree = vec![false; arcs.len()];
+        let mut is_tree_arc = vec![false; arcs.len()];
         let mut member = vec![false; n];
         let mut own: Vec<usize> = nodes.iter().flat_map(|&v| adj[v].iter().copied()).collect();
         own.sort_unstable();
@@ -134,7 +134,7 @@ impl Tree {
                     let u = if a.tail == v { a.head } else { a.tail };
                     if !member[u] && slack(a, rank) == 0 {
                         member[u] = true;
-                        in_tree[i] = true;
+                        is_tree_arc[i] = true;
                         size += 1;
                         stack.push(u);
                     }
@@ -160,7 +160,7 @@ impl Tree {
             root,
             nodes: nodes.to_vec(),
             arcs: own,
-            in_tree,
+            is_tree_arc,
             parent: vec![usize::MAX; n],
             depth: vec![0; n],
             low: vec![0; n],
@@ -180,7 +180,7 @@ impl Tree {
         while let Some(&mut (v, ref mut next, ref mut low)) = stack.last_mut() {
             if let Some(&i) = adj[v].get(*next) {
                 *next += 1;
-                if !self.in_tree[i] || i == self.parent[v] {
+                if !self.is_tree_arc[i] || i == self.parent[v] {
                     continue;
                 }
                 let u = if arcs[i].tail == v {
@@ -224,7 +224,7 @@ impl Tree {
     fn cut_values(&self, arcs: &[Arc]) -> Vec<i64> {
         let mut cut = vec![0i64; arcs.len()];
         for f in self.arcs.iter().map(|&i| &arcs[i]) {
-            let w = f.weight as i64;
+            let w = i64::from(f.weight);
             let (mut t, mut h) = (f.tail, f.head);
             while t != h {
                 // Subir por el lado más profundo. Desde la cola, el subárbol del hijo
@@ -237,10 +237,10 @@ impl Tree {
                 // Si el subárbol es la componente de la cabeza de `a`, salir de él es ir
                 // de cabeza a cola (negativo).
                 let subtree_is_head = a.head == v;
-                cut[i] += if leaves_subtree != subtree_is_head {
-                    w
-                } else {
+                cut[i] += if leaves_subtree == subtree_is_head {
                     -w
+                } else {
+                    w
                 };
                 let up = if a.tail == v { a.head } else { a.tail };
                 if from_tail {
@@ -262,7 +262,7 @@ impl Tree {
                 .arcs
                 .iter()
                 .copied()
-                .filter(|&i| self.in_tree[i] && cut[i] < 0)
+                .filter(|&i| self.is_tree_arc[i] && cut[i] < 0)
                 .min_by_key(|&i| (cut[i], i))
             else {
                 return;
@@ -275,7 +275,7 @@ impl Tree {
                 .arcs
                 .iter()
                 .copied()
-                .filter(|&i| !self.in_tree[i])
+                .filter(|&i| !self.is_tree_arc[i])
                 .filter(|&i| {
                     let (t, h) = (
                         self.in_subtree(arcs[i].tail, child),
@@ -292,8 +292,8 @@ impl Tree {
                     rank[v] += shift;
                 }
             }
-            self.in_tree[leave] = false;
-            self.in_tree[enter] = true;
+            self.is_tree_arc[leave] = false;
+            self.is_tree_arc[enter] = true;
             self.index(arcs, adj);
         }
     }
@@ -302,6 +302,7 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sugiyama::tests::Lcg;
 
     fn arc(tail: usize, head: usize, delta: i32, weight: i32) -> Arc {
         Arc {
@@ -314,7 +315,7 @@ mod tests {
 
     fn cost(arcs: &[Arc], rank: &[i32]) -> i64 {
         arcs.iter()
-            .map(|a| a.weight as i64 * (rank[a.head] - rank[a.tail]) as i64)
+            .map(|a| i64::from(a.weight) * i64::from(rank[a.head] - rank[a.tail]))
             .sum()
     }
 
@@ -354,20 +355,14 @@ mod tests {
     #[test]
     fn result_is_feasible_and_no_worse_than_longest_path() {
         // Grafos pseudoaleatorios deterministas: factibilidad y costo.
-        let mut seed = 7u64;
-        let mut next = |m: u64| {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (seed >> 33) % m
-        };
+        let mut rng = Lcg::new(7);
         for _ in 0..200 {
-            let n = 2 + next(20) as usize;
+            let n = 2 + rng.below(20);
             let mut arcs = Vec::new();
-            for _ in 0..n + next(2 * n as u64) as usize {
-                let (a, b) = (next(n as u64) as usize, next(n as u64) as usize);
+            for _ in 0..n + rng.below(2 * n) {
+                let (a, b) = (rng.below(n), rng.below(n));
                 if a < b {
-                    arcs.push(arc(a, b, next(4) as i32 - 1, next(4) as i32));
+                    arcs.push(arc(a, b, rng.below_i32(4) - 1, rng.below_i32(4)));
                 }
             }
             let rank = solve(n, &arcs).unwrap();
