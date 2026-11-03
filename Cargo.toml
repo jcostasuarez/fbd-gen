@@ -2,6 +2,8 @@
 name = "fbd-gen"
 version = "0.1.0"
 edition = "2024"
+# Let-chains (`if let ... && let ...`). Lo verifica el job `msrv` del CI.
+rust-version = "1.88"
 description = "Genera secciones FBD de Control Expert a partir de un grafo semántico, con layout Sugiyama en celdas enteras"
 license = "MIT"
 repository = "https://github.com/jcostasuarez/fbd-gen"
