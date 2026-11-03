@@ -163,6 +163,9 @@ Cada bloque va alineado a la izquierda de su capa. Antes de exportar, `layout.rs
 valida la grilla igual (bloques y comentarios sin superponerse, cables
 ortogonales que no se tocan entre salidas distintas): si algo falla, la generación da
 error en vez de producir un XML roto.
+Un bloque propio no puede pasar de 1000 celdas de ancho ni de alto, y una sección no
+puede pasar de `sugiyama::MAX_EXTENT` (2²⁴) celdas por eje: son topes propios de fbd-gen
+para que las cuentas enteras no desborden, y pasarlos es un error.
 
 ## Hechos verificados contra Control Expert 15.1
 

@@ -592,3 +592,36 @@ fn block_ids_are_case_insensitive_and_names_cannot_collide() {
         .collect();
     assert_eq!(names, ["X", "Y"]);
 }
+
+#[test]
+fn sheet_beyond_the_extent_cap_is_a_layout_error() {
+    // Con 1 carácter cada 10 celdas el comentario ocupa unas 10 filas por cada carácter
+    // que no entra en el ancho de la red: pasa el tope de la hoja sin una red enorme.
+    let generator = Generator::new(lib().clone())
+        .with_config(GeneratorConfig {
+            layout: LayoutConfig {
+                text_chars_per_10_cells: 1,
+                ..LayoutConfig::default()
+            },
+            ..GeneratorConfig::default()
+        })
+        .unwrap();
+    let mut s = spec(
+        r#"{"name":"P","blocks":[{"id":"n","type":"NOT"}],
+            "links":[["BOOL#TRUE","n.IN"]]}"#,
+    );
+    s.comments = vec![CommentSpec {
+        at: "n".into(),
+        text: "x".repeat(2 * crate::sugiyama::MAX_EXTENT as usize),
+    }];
+    match generator.generate_program(&s) {
+        Err(crate::GenerationError::Layout { source, .. }) => {
+            assert!(source.to_string().contains("excede"), "{source}")
+        }
+        Err(other) => panic!("se esperaba un error de layout: {other}"),
+        Ok(result) => panic!(
+            "se esperaba un error de layout, salió una hoja de {} filas",
+            result.sections[0].layout.height
+        ),
+    }
+}

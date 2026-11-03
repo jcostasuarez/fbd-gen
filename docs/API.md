@@ -100,8 +100,11 @@ generator.register_block(
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-El ancho se expresa en celdas. Las posiciones de pines empiezan en 1 y se expresan en su
-lado, sin contar las filas de cabecera que agrega el generador. IN_OUT ocupa ambos lados:
+El ancho se expresa en celdas, de 2 a 1000. Las posiciones de pines empiezan en 1 y se
+expresan en su lado, sin contar las filas de cabecera que agrega el generador; la última
+fila de un pin (contando sus extensiones) no puede pasar de 996. Los topes solo descartan
+definiciones absurdas: la librería de Control Expert 15.1 llega a 20 de ancho y a la
+posición 34. IN_OUT ocupa ambos lados:
 su posición debe quedar libre tanto entre las entradas como entre las salidas.
 
 El registro valida nombres, tipos no vacíos, dimensiones, pines duplicados y posiciones
@@ -204,8 +207,10 @@ let generator = fbd_gen::Generator::embedded()?;
 entre puertos en filas fijas (`Edge`, sin ciclos) y separaciones (`Spacing`), y devuelve la
 esquina de cada caja y los quiebres de cada cable (`Placement`), todo en enteros.
 Si la entrada no se puede dibujar devuelve `sugiyama::LayoutError`: un puerto fuera de su
-caja (`PortOutOfNode`), cables con un ciclo (`Cycle`) o restricciones sin solución
-(`Infeasible`).
+caja (`PortOutOfNode`), cables con un ciclo (`Cycle`), restricciones sin solución
+(`Infeasible`), o una caja con medidas negativas o un dibujo que podría pasar de
+`sugiyama::MAX_EXTENT` celdas por eje (`TooLarge`). Ese tope garantiza que ninguna cuenta
+en `i32` desborde.
 
 Los demás módulos (validación, partición, normalización, export) son internos: su orden e
 invariantes no forman parte del contrato. La API pública es `Generator`, los tipos que

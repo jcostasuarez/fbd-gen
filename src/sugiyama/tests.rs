@@ -177,3 +177,43 @@ fn random_networks_respect_the_invariants() {
         }
     }
 }
+
+#[test]
+fn oversized_or_negative_nodes_are_rejected_instead_of_overflowing() {
+    let wide = [
+        Node {
+            width: MAX_EXTENT,
+            height: 4,
+        },
+        Node {
+            width: 5,
+            height: 4,
+        },
+    ];
+    let edge = [Edge {
+        from: 0,
+        from_row: 1,
+        to: 1,
+        to_row: 1,
+    }];
+    assert_eq!(
+        layout(&wide, &edge, &SPACING).unwrap_err(),
+        LayoutError::TooLarge
+    );
+    let tall = [Node {
+        width: 5,
+        height: i32::MAX,
+    }];
+    assert_eq!(
+        layout(&tall, &[], &SPACING).unwrap_err(),
+        LayoutError::TooLarge
+    );
+    let negative = [Node {
+        width: -1,
+        height: 4,
+    }];
+    assert_eq!(
+        layout(&negative, &[], &SPACING).unwrap_err(),
+        LayoutError::TooLarge
+    );
+}

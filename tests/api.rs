@@ -262,6 +262,10 @@ fn invalid_dfb_interfaces_do_not_enter_the_catalog() {
         BlockDefinition::dfb("Bad", 10).input("X", "", 1),
         BlockDefinition::dfb("Bad", 10).input("X", "BOOL", 0),
         BlockDefinition::dfb("Bad", 10).input("X", "BOOL", u32::MAX),
+        // Tope de 1000 celdas: un ancho o una fila absurda desbordaría el layout.
+        BlockDefinition::dfb("Bad", 1001),
+        BlockDefinition::dfb("Bad", i32::MAX as u32),
+        BlockDefinition::dfb("Bad", 10).input("X", "BOOL", 997),
         BlockDefinition::dfb("Bad", 10).input("EN", "BOOL", 1),
         BlockDefinition::dfb("Bad", 10)
             .input("X", "BOOL", 1)
@@ -285,6 +289,15 @@ fn invalid_dfb_interfaces_do_not_enter_the_catalog() {
         Err(LibraryError::Json(_))
     ));
     assert!(library.is_empty());
+}
+
+#[test]
+fn block_dimensions_up_to_the_cap_are_accepted() {
+    let mut library = Library::default();
+    library
+        .register(BlockDefinition::dfb("Wide", 1000).input("X", "BOOL", 996))
+        .unwrap();
+    assert_eq!(library.len(), 1);
 }
 
 #[test]
