@@ -32,6 +32,7 @@ use crate::library::Kind;
 /// Cada extremo de un link es `bloque.PIN`, un literal IEC (`TRUE`, `5`, `T#5s`,
 /// `16#FF`, `'texto'`) o, si no es ninguna de las dos cosas, una variable.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProgramSpec {
     pub name: String,
     /// Tarea dueña de la sección (MAST por defecto).
@@ -66,6 +67,7 @@ impl ProgramSpec {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommentSpec {
     /// Id de un bloque de la red comentada.
     pub at: String,
@@ -74,7 +76,7 @@ pub struct CommentSpec {
 
 /// Criterios de partición en secciones (etapa 3).
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PartitionSpec {
     /// Además del equipo (`group`), separar por etapa del flujo de señal (`stage`).
     pub by_stage: bool,
@@ -96,6 +98,7 @@ pub(crate) fn default_task() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VarSpec {
     pub name: String,
     #[serde(rename = "type")]
@@ -119,6 +122,7 @@ impl VarSpec {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BlockSpec {
     pub id: String,
     #[serde(rename = "type")]
@@ -151,7 +155,7 @@ impl BlockSpec {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum LinkSpec {
     Pair(String, String),
     Object { from: String, to: String },

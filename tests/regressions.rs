@@ -340,3 +340,28 @@ fn structured_and_topological_variables_are_accepted() {
         assert!(!is_variable_ref(name), "{name}");
     }
 }
+
+#[test]
+fn unknown_fields_in_the_input_are_rejected() {
+    // Un typo del LLM no debe ignorarse: `instace` dejaría la instancia con el id.
+    for json in [
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON","instace":"Mi_Timer"}]}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"partiton":{"maxBlocks":1}}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"partition":{"maxBlock":1}}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"variables":[{"name":"V","type":"BOOL","adress":"%M1"}]}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"comments":[{"at":"t","txt":"x"}]}"#,
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"links":[{"from":"A","to":"t.IN","via":"x"}]}"#,
+    ] {
+        let error = serde_json::from_str::<ProgramSpec>(json).unwrap_err();
+        assert!(
+            error.to_string().contains("unknown field")
+                || error.to_string().contains("did not match any variant"),
+            "{json}: {error}"
+        );
+    }
+    let ok: ProgramSpec = serde_json::from_str(
+        r#"{"name":"T","blocks":[{"id":"t","type":"TON"}],"links":[{"from":"A","to":"t.IN"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(ok.links[0].ends(), ("A", "t.IN"));
+}

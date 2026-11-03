@@ -80,6 +80,8 @@ El nombre del programa, los ids de bloque y las instancias son identificadores I
 admiten además campos (`Motor.Run`), índices (`Tab[3]`) y direcciones (`%MW100`). Un
 nombre inválido, un grafo sin bloques o más entradas extensibles que el máximo del
 bloque son errores de validación, antes de ejecutar el layout.
+Un campo desconocido (`instace`, `partiton`...) es un error al leer el JSON: un
+typo nunca se ignora en silencio.
 
 `variables` es opcional: lo que no se declara se tipa por inferencia (`src/types.rs`), y
 una variable sin tipo deducible es un error.
