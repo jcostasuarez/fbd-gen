@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::graph::UnionFind;
-use crate::iec::var_root;
+use crate::iec::{is_literal, var_root};
 use crate::library::Kind;
 use crate::model::*;
 
@@ -152,6 +152,31 @@ fn is_elementary(ty: &str) -> bool {
     )
 }
 
+/// Valor inicial de una variable elemental: tiene que ser un literal y, si es tipado
+/// (`T#5s`, `INT#3`), del tipo declarado. Un literal sin prefijo solo sugiere un tipo,
+/// igual que en un pin, así que no se rechaza. Los derivados (arrays, DDT) se inicializan
+/// por elemento y no se validan aquí.
+fn check_init(decl: &VarSpec, diags: &mut Diagnostics) {
+    let Some(init) = decl.init.as_deref().filter(|_| is_elementary(&decl.ty)) else {
+        return;
+    };
+    let problem = if !is_literal(init) {
+        "no es un literal".to_string()
+    } else if let Some(ty) = typed_literal_type(init).filter(|ty| !compatible(ty, &decl.ty)) {
+        format!("es {ty}")
+    } else {
+        return;
+    };
+    diags.push(
+        Level::Error,
+        STAGE,
+        format!(
+            "variable {} ({}): el valor inicial \"{init}\" {problem}",
+            decl.name, decl.ty
+        ),
+    );
+}
+
 /// Tipo concreto que impone un pin, una declaración o un literal tipado, con su origen
 /// para los mensajes.
 struct Strong {
@@ -235,6 +260,9 @@ pub fn infer(
     }
     for w in &section.wires {
         links.push((pin_node[&w.from], pin_node[&w.to]));
+    }
+    for d in declared {
+        check_init(d, diags);
     }
     let mut decl_by_name: HashMap<String, &VarSpec> = HashMap::new();
     for d in declared {

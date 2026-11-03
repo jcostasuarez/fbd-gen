@@ -173,7 +173,8 @@ No se debe repetir un IN_OUT en `inputs` u `outputs`.
 con sufijo `_call`. Las EF no tienen instancia. `inputCount` permite indicar la cantidad
 de entradas extensibles dentro del rango del bloque; los pines referenciados también
 pueden ampliar esa cantidad. `variables` permite declarar tipos y metadatos explícitos
-cuando no alcanza la inferencia. `task` toma `MAST` por defecto y `comment` comenta el bloque.
+cuando no alcanza la inferencia. `task` toma `MAST` por defecto (ver las tareas admitidas en el README) y `comment` comenta
+el bloque.
 
 Se comprueban el tipo de bloque, la dirección y existencia de los pines, los parámetros
 vacíos y el uso de variables donde corresponde. Las llamadas usan la misma validación

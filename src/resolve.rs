@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::iec::{is_identifier, is_literal, is_variable_ref, var_root};
+use crate::iec::{is_address, is_identifier, is_literal, is_variable_ref, task_name, var_root};
 use crate::library::{BlockDef, Library};
 use crate::model::*;
 use crate::xml;
@@ -194,12 +194,32 @@ pub fn resolve(spec: &ProgramSpec, lib: &Library, diags: &mut Diagnostics) -> Op
     if spec.blocks.is_empty() {
         diags.push(Level::Error, STAGE, "el grafo no tiene bloques");
     }
+    if task_name(&spec.task).is_none() {
+        diags.push(
+            Level::Error,
+            STAGE,
+            format!(
+                "tarea \"{}\" inválida: MAST, FAST, AUX0 a AUX3 o SAFE",
+                spec.task
+            ),
+        );
+    }
     for v in &spec.variables {
         if !is_variable_ref(&v.name) {
             diags.push(
                 Level::Error,
                 STAGE,
                 format!("variable declarada con nombre inválido: \"{}\"", v.name),
+            );
+        }
+        if let Some(address) = v.address.as_ref().filter(|a| !is_address(a)) {
+            diags.push(
+                Level::Error,
+                STAGE,
+                format!(
+                    "variable {}: \"{address}\" no es una dirección topológica (%MW100, %I0.1.2...)",
+                    v.name
+                ),
             );
         }
     }

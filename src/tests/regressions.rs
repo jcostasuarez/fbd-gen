@@ -661,3 +661,68 @@ fn control_characters_in_xml_texts_are_validation_errors() {
     );
     generator().generate_program(&ok).unwrap();
 }
+
+fn errors(json: &str) -> Vec<String> {
+    match generator().generate_program(&spec(json)) {
+        Ok(_) => Vec::new(),
+        Err(e) => e
+            .diagnostics()
+            .iter()
+            .filter(|d| d.level == Level::Error)
+            .map(|d| d.message.clone())
+            .collect(),
+    }
+}
+
+#[test]
+fn task_must_be_a_control_expert_task_and_is_exported_in_canonical_form() {
+    let program = |task: &str| {
+        format!(
+            r#"{{"name":"P","task":"{task}","blocks":[{{"id":"n","type":"NOT"}}],
+                "links":[["BOOL#TRUE","n.IN"]]}}"#
+        )
+    };
+    for bad in ["NO EXISTE <x>", "AUX4", "EVT0", ""] {
+        let errs = errors(&program(bad));
+        assert!(errs.iter().any(|m| m.contains("tarea")), "{bad}: {errs:?}");
+    }
+    let result = generator()
+        .generate_program(&spec(&program("aux1")))
+        .unwrap();
+    assert_eq!(result.task, "AUX1");
+    assert!(result.sections[0].xml.contains(r#"task="AUX1""#));
+}
+
+#[test]
+fn initial_values_and_addresses_are_validated_before_export() {
+    let program = |var: &str| {
+        format!(
+            r#"{{"name":"P","variables":[{var}],"blocks":[{{"id":"n","type":"NOT"}}],
+                "links":[["V","n.IN"],["n.OUT","Q"]]}}"#
+        )
+    };
+    for (var, expected) in [
+        (
+            r#"{"name":"V","type":"BOOL","init":"hola mundo"}"#,
+            "no es un literal",
+        ),
+        (r#"{"name":"V","type":"WORD","init":"T#5s"}"#, "es TIME"),
+        (r#"{"name":"V","type":"WORD","init":"INT#3"}"#, "es INT"),
+        (
+            r#"{"name":"V","type":"WORD","address":"MW100"}"#,
+            "dirección topológica",
+        ),
+    ] {
+        let errs = errors(&program(var));
+        assert!(errs.iter().any(|m| m.contains(expected)), "{var}: {errs:?}");
+    }
+    // Literales sin prefijo, bases y alias compatibles siguen siendo válidos.
+    for var in [
+        r#"{"name":"V","type":"WORD","init":"16#FF","address":"%MW100"}"#,
+        r#"{"name":"V","type":"WORD","init":"WORD#2#1010"}"#,
+        r#"{"name":"V","type":"BOOL","init":"TRUE"}"#,
+        r#"{"name":"V","type":"EBOOL","init":"BOOL#FALSE","address":"%M1"}"#,
+    ] {
+        assert_eq!(errors(&program(var)), Vec::<String>::new(), "{var}");
+    }
+}

@@ -95,6 +95,12 @@ tabulación y saltos de línea: XML 1.0 no los admite ni escapados.
 `variables` es opcional: lo que no se declara se tipa por inferencia (`src/types.rs`), y
 una variable sin tipo deducible es un error.
 
+`task` es `MAST` por defecto; también se admiten `FAST`, `AUX0` a `AUX3` y `SAFE`, sin
+distinguir mayúsculas, y el XML lleva el nombre en mayúsculas. En una variable declarada,
+`address` tiene que ser una dirección topológica (`%MW100`) e `init`, si el tipo es
+elemental, un literal: uno tipado tiene que ser del tipo declarado (`INT#3` no inicializa
+un `WORD`), y uno sin prefijo (`16#FF`, `1.5`) solo sugiere el tipo, igual que en un pin.
+
 Para un programa con varios equipos, cada bloque lleva `group` (equipo: `P101`) y
 opcionalmente `stage` (etapa: `entradas`, `salidas`...). `partition` controla la división:
 
