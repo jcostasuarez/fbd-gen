@@ -1,0 +1,23 @@
+[package]
+name = "fbd-gen-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+fbd-gen = { path = "..", default-features = false, features = ["embedded-library"] }
+
+# Crate aparte del paquete principal: no hereda sus lints ni entra en `cargo test`.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "generate"
+path = "fuzz_targets/generate.rs"
+test = false
+doc = false
+bench = false

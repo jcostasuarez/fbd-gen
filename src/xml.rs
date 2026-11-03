@@ -4,17 +4,17 @@
 /// saltos de línea y todo lo imprimible salvo U+FFFE y U+FFFF. Los demás caracteres de
 /// control no se pueden escribir ni escapados, así que un texto que los tenga se rechaza
 /// al validar la entrada.
-pub fn is_char(c: char) -> bool {
+pub(crate) fn is_char(c: char) -> bool {
     matches!(c, '\t' | '\n' | '\r') || (c >= ' ' && c != '\u{FFFE}' && c != '\u{FFFF}')
 }
 
 /// Primer caracter que no puede ir en un documento XML, si hay alguno.
-pub fn invalid_char(s: &str) -> Option<char> {
+pub(crate) fn invalid_char(s: &str) -> Option<char> {
     s.chars().find(|&c| !is_char(c))
 }
 
 /// Escapa un texto para un atributo o un contenido de elemento.
-pub fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

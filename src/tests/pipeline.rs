@@ -177,7 +177,7 @@ fn commutative_inputs_follow_sources() {
         .iter()
         .map(|w| (w[0].y, w.last().unwrap().y))
         .collect();
-    ends.sort();
+    ends.sort_unstable();
     assert!(ends.windows(2).all(|p| p[0].1 < p[1].1), "{ends:?}");
     for w in &lay.wires {
         assert!(
@@ -435,7 +435,7 @@ fn network_comment_is_a_header_text_box_in_cells() {
     let t = &lay.texts[0];
     // Debajo de la primera red, encima del bloque comentado y sin pisarlo.
     assert!(
-        t.y >= lay.blocks[0].y + sec.blocks[0].height as i32,
+        t.y >= lay.blocks[0].y + crate::layout::coord(sec.blocks[0].height),
         "{t:?}"
     );
     assert!(

@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 /// Identificador IEC sin caracteres extendidos: letra o `_` seguida de letras, dígitos o
 /// `_`.
-pub fn is_identifier(s: &str) -> bool {
+pub(crate) fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     chars
         .next()
@@ -15,7 +15,7 @@ pub fn is_identifier(s: &str) -> bool {
 
 /// Variable que se puede escribir como parámetro actual: un identificador con campos
 /// (`Motor.Run`) o índices (`Tab[3]`) opcionales, o una dirección topológica (`%MW100`).
-pub fn is_variable_ref(s: &str) -> bool {
+pub(crate) fn is_variable_ref(s: &str) -> bool {
     if let Some(address) = s.strip_prefix('%') {
         return address.starts_with(|c: char| c.is_ascii_alphabetic())
             && address
@@ -38,7 +38,7 @@ pub fn is_variable_ref(s: &str) -> bool {
 /// Variable que hay que declarar para un parámetro actual: el propio nombre si es simple,
 /// la raíz de un acceso (`Motor` en `Motor.Run`, `Tab` en `Tab[3]`) o `None` para una
 /// dirección topológica (`%MW100`), que no se declara.
-pub fn var_root(name: &str) -> Option<&str> {
+pub(crate) fn var_root(name: &str) -> Option<&str> {
     if name.starts_with('%') {
         return None;
     }
@@ -46,7 +46,7 @@ pub fn var_root(name: &str) -> Option<&str> {
 }
 
 /// Literales: booleanos, numéricos, tipados (`T#5s`, `16#FF`, `INT#3`) y strings.
-pub fn is_literal(s: &str) -> bool {
+pub(crate) fn is_literal(s: &str) -> bool {
     let s = s.trim();
     if s.eq_ignore_ascii_case("TRUE") || s.eq_ignore_ascii_case("FALSE") {
         return true;
@@ -73,17 +73,17 @@ pub fn is_literal(s: &str) -> bool {
 const TASKS: [&str; 7] = ["MAST", "FAST", "AUX0", "AUX1", "AUX2", "AUX3", "SAFE"];
 
 /// Nombre canónico (en mayúsculas) de una tarea, sin distinguir mayúsculas en la entrada.
-pub fn task_name(task: &str) -> Option<&'static str> {
+pub(crate) fn task_name(task: &str) -> Option<&'static str> {
     TASKS.into_iter().find(|t| t.eq_ignore_ascii_case(task))
 }
 
 /// Dirección topológica (`%MW100`, `%I0.1.2`).
-pub fn is_address(s: &str) -> bool {
+pub(crate) fn is_address(s: &str) -> bool {
     s.starts_with('%') && is_variable_ref(s)
 }
 
 /// Identificador válido a partir de un texto arbitrario.
-pub fn sanitize(s: &str) -> String {
+pub(crate) fn sanitize(s: &str) -> String {
     let mut out: String = s
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -96,7 +96,7 @@ pub fn sanitize(s: &str) -> String {
 
 /// `base`, o `base_2`, `base_3`..., el primero que no esté en `used` (que guarda nombres
 /// en mayúsculas, porque IEC no las distingue). Lo reserva en `used`.
-pub fn unique_name(base: &str, used: &mut HashSet<String>) -> String {
+pub(crate) fn unique_name(base: &str, used: &mut HashSet<String>) -> String {
     let mut name = base.to_string();
     let mut n = 2;
     while used.contains(&name.to_ascii_uppercase()) {

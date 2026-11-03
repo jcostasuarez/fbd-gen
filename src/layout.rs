@@ -8,16 +8,21 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::model::*;
-pub use crate::sugiyama::Pos;
+use crate::model::{Block, Diagnostics, Level, Param, Pin, PinRef, Section, Stage};
+pub(crate) use crate::sugiyama::Pos;
 use crate::sugiyama::{self, MAX_EXTENT};
 
 const STAGE: Stage = Stage::Layout;
 
-/// Falla del layout: el motor no pudo dibujar la red o la grilla no pasó la validación.
-#[derive(Debug)]
+/// Por qué no se pudo dibujar una sección: el motor rechazó una red o el dibujo no pasó
+/// la validación de la grilla.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LayoutError {
+    /// El motor Sugiyama no pudo dibujar una red (ciclo, puertos inválidos, tamaño).
     Engine(sugiyama::LayoutError),
+    /// La sección excede [`MAX_EXTENT`] o el dibujo viola un invariante de la grilla
+    /// (bloques superpuestos, cables que se tocan). Esto último indicaría un bug del motor.
     Grid(String),
 }
 
@@ -86,7 +91,7 @@ impl Default for LayoutConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct Layout {
+pub(crate) struct Layout {
     /// Esquina (posX, posY) de cada bloque, en celdas, indexado como `section.blocks`.
     pub blocks: Vec<Pos>,
     /// Polilínea ortogonal de cada cable, indexada como `section.wires`.
@@ -100,7 +105,7 @@ pub struct Layout {
 }
 
 #[derive(Debug, Clone)]
-pub struct TextBox {
+pub(crate) struct TextBox {
     pub x: i32,
     pub y: i32,
     pub width: i32,
@@ -133,26 +138,37 @@ impl Margins {
     /// Ancho de la caja del bloque en el layout: el bloque (pines de entrada en la columna 0 y de salida en la
     /// `width - 1`) más los parámetros escritos a cada lado.
     fn node_width(&self, b: &Block) -> i32 {
-        self.left + b.width as i32 - 1 + self.right
+        self.left + coord(b.width) - 1 + self.right
     }
+}
+
+/// Medida de un bloque (ancho, alto, fila de pin) o de `LayoutConfig` en coordenadas de
+/// grilla. Ambas llegan acotadas: la librería limita los bloques a `MAX_BLOCK_CELLS` y el
+/// generador valida la configuración antes de dibujar.
+pub(crate) fn coord(n: u32) -> i32 {
+    i32::try_from(n).expect("medida acotada antes del layout")
 }
 
 /// Cuenta en `u64` llevada a `i32`, topeada justo arriba de `MAX_EXTENT`: un texto
 /// gigante da una medida que el chequeo de extensión rechaza, nunca un desborde.
 fn cells(n: u64) -> i32 {
-    i32::try_from(n.min(MAX_EXTENT as u64 + 1)).unwrap_or(MAX_EXTENT)
+    i32::try_from(n).unwrap_or(i32::MAX).min(MAX_EXTENT + 1)
+}
+
+/// Caracteres de un texto, en `u64` para las cuentas de celdas.
+fn char_count(text: &str) -> u64 {
+    u64::try_from(text.chars().count()).unwrap_or(u64::MAX)
 }
 
 fn label_cells(text: &str, cfg: &LayoutConfig) -> i32 {
-    let chars = text.chars().count() as u64;
-    cells((chars * u64::from(cfg.label_cells_per_10_chars)).div_ceil(10) + 1)
+    let scaled = char_count(text).saturating_mul(u64::from(cfg.label_cells_per_10_chars));
+    cells(scaled.div_ceil(10) + 1)
 }
 
 /// Filas que ocupa un comentario de `width` celdas.
 fn text_lines(text: &str, width: i32, cfg: &LayoutConfig) -> i32 {
-    let chars = text.chars().count() as u64;
-    let per_10 = width.max(1) as u64 * u64::from(cfg.text_chars_per_10_cells);
-    cells((chars * 10).div_ceil(per_10).max(1))
+    let per_10 = u64::from(width.max(1).unsigned_abs()) * u64::from(cfg.text_chars_per_10_cells);
+    cells(char_count(text).saturating_mul(10).div_ceil(per_10).max(1))
 }
 
 /// Corta el apilado en cuanto la hoja pasa `MAX_EXTENT`. Cada red ya viene acotada por el
@@ -167,16 +183,24 @@ fn check_extent(section: &Section, extent: i32) -> Result<()> {
     Ok(())
 }
 
-/// Celda del pin sobre el borde del bloque: la columna de salida o la de entrada.
-fn pin_cell(section: &Section, layout: &Layout, r: PinRef, east: bool) -> Pos {
+/// Borde del bloque donde se conecta un cable.
+#[derive(Clone, Copy)]
+enum Side {
+    /// Columna de entradas: donde llega el cable.
+    West,
+    /// Columna de salidas: de donde sale el cable.
+    East,
+}
+
+/// Celda del pin sobre el borde `side` del bloque.
+fn pin_cell(section: &Section, layout: &Layout, r: PinRef, side: Side) -> Pos {
     let (b, pos) = (&section.blocks[r.block], layout.blocks[r.block]);
     Pos {
-        x: if east {
-            pos.x + b.width as i32 - 1
-        } else {
-            pos.x
+        x: match side {
+            Side::West => pos.x,
+            Side::East => pos.x + coord(b.width) - 1,
         },
-        y: pos.y + section.pin(r).row as i32,
+        y: pos.y + coord(section.pin(r).row),
     }
 }
 
@@ -187,8 +211,8 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
         .map(|b| Margins::new(b, cfg))
         .collect();
     let spacing = sugiyama::Spacing {
-        node: cfg.node_gap as i32,
-        layer: cfg.layer_gap as i32,
+        node: coord(cfg.node_gap),
+        layer: coord(cfg.layer_gap),
     };
 
     let mut layout = Layout {
@@ -199,7 +223,7 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
         width: 0,
         height: 0,
     };
-    let margin = cfg.frame_margin as i32;
+    let margin = coord(cfg.frame_margin);
     let mut cursor_y = margin;
     for members in nets {
         // Caja de cada bloque (con sus parámetros) y cables de la red, en índices locales.
@@ -209,7 +233,7 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
             .iter()
             .map(|&bi| sugiyama::Node {
                 width: margins[bi].node_width(&section.blocks[bi]),
-                height: section.blocks[bi].height as i32,
+                height: coord(section.blocks[bi].height),
             })
             .collect();
         let wires: Vec<usize> = (0..section.wires.len())
@@ -221,9 +245,9 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
                 let w = section.wires[wi];
                 sugiyama::Edge {
                     from: local[&w.from.block],
-                    from_row: section.pin(w.from).row as i32,
+                    from_row: coord(section.pin(w.from).row),
                     to: local[&w.to.block],
-                    to_row: section.pin(w.to).row as i32,
+                    to_row: coord(section.pin(w.to).row),
                 }
             })
             .collect();
@@ -275,26 +299,26 @@ fn run_once(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Resul
                 x: n.x + dx + margins[bi].left,
                 y: n.y + dy,
             };
-            bottom = bottom.max(n.y + dy + b.height as i32);
+            bottom = bottom.max(n.y + dy + coord(b.height));
             layout.width = layout.width.max(n.x + dx + margins[bi].node_width(b));
         }
         for (wi, pts) in bends {
             let w = section.wires[wi];
-            let mut line = vec![pin_cell(section, &layout, w.from, true)];
+            let mut line = vec![pin_cell(section, &layout, w.from, Side::East)];
             line.extend(pts.into_iter().map(|p| Pos {
                 x: p.x + dx,
                 y: p.y + dy,
             }));
-            line.push(pin_cell(section, &layout, w.to, false));
+            line.push(pin_cell(section, &layout, w.to, Side::West));
             bottom = bottom.max(line.iter().map(|p| p.y + 1).max().unwrap_or(0));
             layout.wires[wi] = line;
         }
         layout.networks.push((top, bottom - top));
-        cursor_y = bottom + cfg.network_gap as i32;
+        cursor_y = bottom + coord(cfg.network_gap);
         check_extent(section, cursor_y.max(layout.width))?;
     }
     layout.width += margin;
-    layout.height = cursor_y - cfg.network_gap as i32 + margin;
+    layout.height = cursor_y - coord(cfg.network_gap) + margin;
     check_extent(section, layout.width.max(layout.height))?;
     check(section, &layout, &margins)?;
     Ok(layout)
@@ -328,7 +352,7 @@ fn check(section: &Section, layout: &Layout, margins: &[Margins]) -> Result<()> 
                 x: p.x - m.left,
                 y: p.y,
                 w: m.node_width(b),
-                h: b.height as i32,
+                h: coord(b.height),
             };
             (b.id.as_str(), r)
         })
@@ -394,14 +418,14 @@ fn check(section: &Section, layout: &Layout, margins: &[Margins]) -> Result<()> 
 
 /// Reasignación de las entradas conmutativas de un bloque: la conexión del pin `from`
 /// pasa al pin `slot`.
-pub struct InputSwap {
+pub(crate) struct InputSwap {
     block: usize,
     mapping: HashMap<usize, usize>,
 }
 
 /// Entradas de los bloques conmutativos a reasignar según la altura de lo que las
 /// alimenta en `layout`, para que los cables lleguen sin cruzarse. Vacío si ya están bien.
-pub fn commutative_swaps(section: &Section, layout: &Layout) -> Vec<InputSwap> {
+pub(crate) fn commutative_swaps(section: &Section, layout: &Layout) -> Vec<InputSwap> {
     let mut swaps = Vec::new();
     for bi in 0..section.blocks.len() {
         let group: Vec<usize> = (0..section.blocks[bi].pins.len())
@@ -420,12 +444,13 @@ pub fn commutative_swaps(section: &Section, layout: &Layout) -> Vec<InputSwap> {
                     .wires
                     .iter()
                     .find(|w| w.to == r)
-                    .map(|w| layout.blocks[w.from.block].y + section.pin(w.from).row as i32)
-                    .unwrap_or(by + section.blocks[bi].pins[pi].row as i32);
+                    .map_or(by + coord(section.blocks[bi].pins[pi].row), |w| {
+                        layout.blocks[w.from.block].y + coord(section.pin(w.from).row)
+                    });
                 (key, pi)
             })
             .collect();
-        keys.sort();
+        keys.sort_unstable();
         // El slot k (en orden de fila) recibe la conexión con la k-ésima clave más chica.
         let mapping: HashMap<usize, usize> = keys
             .iter()
@@ -441,7 +466,7 @@ pub fn commutative_swaps(section: &Section, layout: &Layout) -> Vec<InputSwap> {
 
 /// Aplica las reasignaciones: mueve parámetros y destinos de cables. Es la única etapa
 /// del layout que cambia la sección, y no cambia su significado (entradas conmutativas).
-pub fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mut Diagnostics) {
+pub(crate) fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mut Diagnostics) {
     for swap in swaps {
         let block = &mut section.blocks[swap.block];
         let params: HashMap<usize, Option<Param>> = swap
@@ -450,7 +475,7 @@ pub fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mut Diagn
             .map(|&pi| (pi, block.pins[pi].param_in.clone()))
             .collect();
         for (&from_pin, &slot) in &swap.mapping {
-            block.pins[slot].param_in = params[&from_pin].clone();
+            block.pins[slot].param_in.clone_from(&params[&from_pin]);
         }
         for w in section
             .wires
@@ -473,7 +498,7 @@ pub fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mut Diagn
 }
 
 /// Dibuja las redes en la grilla y valida el resultado. No modifica la sección.
-pub fn layout(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Result<Layout> {
+pub(crate) fn layout(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Result<Layout> {
     run_once(section, nets, cfg)
 }
 
@@ -481,6 +506,7 @@ pub fn layout(section: &Section, nets: &[Vec<usize>], cfg: &LayoutConfig) -> Res
 mod tests {
     use super::*;
     use crate::library::Kind;
+    use crate::model::{Dir, Wire};
 
     fn block(id: &str) -> Block {
         let pin = |name: &str, dir, row| Pin {

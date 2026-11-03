@@ -30,28 +30,37 @@ pub const MAX_EXTENT: i32 = 1 << 24;
 /// Celda de la grilla: columna `x`, fila `y`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Pos {
+    /// Columna.
     pub x: i32,
+    /// Fila.
     pub y: i32,
 }
 
 /// Caja de un nodo. Los puertos de entrada están en la columna 0 y los de salida en la
 /// columna `width`, cada uno en su fila (relativa al borde superior).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Node {
+    /// Ancho en columnas.
     pub width: i32,
+    /// Alto en filas.
     pub height: i32,
 }
 
 /// Cable de la salida `from_row` de `from` a la entrada `to_row` de `to`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edge {
+    /// Índice del nodo de origen.
     pub from: usize,
+    /// Fila del puerto de salida, relativa al borde superior de `from`.
     pub from_row: i32,
+    /// Índice del nodo de destino.
     pub to: usize,
+    /// Fila del puerto de entrada, relativa al borde superior de `to`.
     pub to_row: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Separaciones mínimas del dibujo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Spacing {
     /// Filas libres entre dos nodos de una misma capa.
     pub node: i32,
@@ -59,7 +68,8 @@ pub struct Spacing {
     pub layer: i32,
 }
 
-#[derive(Debug, Clone)]
+/// Resultado del layout, indexado como los nodos y cables de entrada.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
     /// Esquina superior izquierda de cada nodo.
     pub nodes: Vec<Pos>,
@@ -72,7 +82,11 @@ pub struct Placement {
 #[non_exhaustive]
 pub enum LayoutError {
     /// El cable `edge` apunta a un nodo inexistente o a una fila fuera de su nodo.
-    PortOutOfNode { edge: usize },
+    /// El cable `edge` apunta a un nodo inexistente o a una fila fuera de su nodo.
+    PortOutOfNode {
+        /// Índice del cable en la entrada.
+        edge: usize,
+    },
     /// Los cables forman un ciclo dirigido (hay que cortarlo antes).
     Cycle,
     /// Las restricciones de posición vertical no tienen solución.
@@ -115,8 +129,26 @@ struct Segment {
     to_row: i32,
 }
 
-/// Los cables deben formar un grafo sin ciclos (la normalización corta los lazos).
+/// Ubica cada nodo y traza cada cable de una red en la grilla. Los cables deben formar
+/// un grafo sin ciclos (en fbd-gen, la normalización corta los lazos antes).
+///
+/// ```
+/// use fbd_gen::sugiyama::{layout, Edge, Node, Spacing};
+///
+/// let nodes = [Node { width: 6, height: 4 }, Node { width: 6, height: 4 }];
+/// let edges = [Edge { from: 0, from_row: 2, to: 1, to_row: 2 }];
+/// let placed = layout(&nodes, &edges, &Spacing { node: 2, layer: 3 })?;
+/// // El cable avanza de izquierda a derecha: el destino queda en una capa posterior.
+/// assert!(placed.nodes[1].x > placed.nodes[0].x + nodes[0].width);
+/// # Ok::<(), fbd_gen::sugiyama::LayoutError>(())
+/// ```
+///
+/// # Errors
+///
+/// [`LayoutError`] si un cable apunta fuera de su nodo, si hay un ciclo o si el
+/// dibujo excedería [`MAX_EXTENT`].
 pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Placement> {
+    let spacing = *spacing;
     if nodes.iter().any(|n| n.width < 0 || n.height < 1) {
         return Err(LayoutError::TooLarge);
     }
@@ -145,8 +177,9 @@ pub fn layout(nodes: &[Node], edges: &[Edge], spacing: &Spacing) -> Result<Place
 ///   ocupado como mucho.
 /// - Horizontal: el ancho de cada capa más su canal, que usa a lo sumo dos columnas por
 ///   tramo.
-fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: &Spacing) -> Result<()> {
-    let (v, s) = (vertices.len() as i64, segments.len() as i64);
+fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: Spacing) -> Result<()> {
+    let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    let (v, s) = (count(vertices.len()), count(segments.len()));
     let node_gap = i64::from(spacing.node).abs().max(1);
     let layer_gap = i64::from(spacing.layer).abs();
     let delta = vertices
@@ -158,7 +191,7 @@ fn check_extent(vertices: &[Vertex], segments: &[Segment], spacing: &Spacing) ->
         + 1;
     let layers = vertices
         .iter()
-        .map(|x| x.layer as i64 + 1)
+        .map(|x| count(x.layer).saturating_add(1))
         .max()
         .unwrap_or(0);
     let widths: i64 = vertices.iter().map(|x| i64::from(x.width)).sum();
@@ -189,11 +222,15 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
     let Some(rank) = simplex::solve(nodes.len(), &arcs) else {
         return Err(LayoutError::Cycle);
     };
+    let rank: Vec<usize> = rank
+        .into_iter()
+        .map(|r| usize::try_from(r).expect("el simplex normaliza los rangos a partir de 0"))
+        .collect();
     let mut vertices: Vec<Vertex> = nodes
         .iter()
         .enumerate()
         .map(|(i, n)| Vertex {
-            layer: rank[i] as usize,
+            layer: rank[i],
             height: n.height,
             width: n.width,
             real: true,
@@ -203,7 +240,7 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
     let mut segments = Vec::new();
     for (i, e) in edges.iter().enumerate() {
         let (mut from, mut from_row) = (e.from, e.from_row);
-        for layer in rank[e.from] as usize + 1..rank[e.to] as usize {
+        for layer in rank[e.from] + 1..rank[e.to] {
             vertices.push(Vertex {
                 layer,
                 height: 1,
@@ -232,12 +269,12 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
     Ok((vertices, segments))
 }
 
-fn gap(a: &Vertex, b: &Vertex, spacing: &Spacing) -> i32 {
+fn gap(a: &Vertex, b: &Vertex, spacing: Spacing) -> i32 {
     if a.real && b.real { spacing.node } else { 1 }
 }
 
 /// Borde superior de cada vértice si la capa se apila en el orden dado.
-fn stacked(order: &[usize], vertices: &[Vertex], spacing: &Spacing, top: &mut [i32]) {
+fn stacked(order: &[usize], vertices: &[Vertex], spacing: Spacing, top: &mut [i32]) {
     let mut y = 0;
     for (k, &v) in order.iter().enumerate() {
         if k > 0 {
@@ -272,8 +309,8 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
         };
         for l in range {
             let fixed = if forward { l - 1 } else { l + 1 };
-            stacked(&layers[fixed], vertices, &spacing, &mut top);
-            stacked(&layers[l], vertices, &spacing, &mut top);
+            stacked(&layers[fixed], vertices, spacing, &mut top);
+            stacked(&layers[l], vertices, spacing, &mut top);
             // Borde superior deseado: el que alinea cada puerto con su vecino fijo.
             let mut sum = vec![(0i64, 0i64); vertices.len()];
             for s in segments {
@@ -283,13 +320,13 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
                     (s.from, s.from_row, s.to, s.to_row)
                 };
                 if vertices[free].layer == l && vertices[other].layer == fixed {
-                    sum[free].0 += (top[other] + other_row - own_row) as i64;
+                    sum[free].0 += i64::from(top[other] + other_row - own_row);
                     sum[free].1 += 1;
                 }
             }
             for &v in &layers[l] {
                 if sum[v].1 == 0 {
-                    sum[v] = (top[v] as i64, 1);
+                    sum[v] = (i64::from(top[v]), 1);
                 }
             }
             // Orden estable: los empates conservan el orden actual.
@@ -298,7 +335,7 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
         let c = crossings(&layers, vertices, segments);
         if c < best_crossings {
             best_crossings = c;
-            best = layers.clone();
+            best.clone_from(&layers);
         }
     }
     best
@@ -307,14 +344,14 @@ fn order_layers(vertices: &[Vertex], segments: &[Segment]) -> Vec<Vec<usize>> {
 /// Cruces entre capas consecutivas: pares de tramos cuyos extremos (posición en la
 /// capa, fila del puerto) quedan en orden opuesto. Una misma salida no cruza consigo.
 fn crossings(layers: &[Vec<usize>], vertices: &[Vertex], segments: &[Segment]) -> usize {
+    // Por capa, los extremos (posición, fila) de cada tramo que sale de ella.
+    type Ends = ((usize, i32), (usize, i32));
     let mut pos = vec![0; vertices.len()];
     for layer in layers {
         for (k, &v) in layer.iter().enumerate() {
             pos[v] = k;
         }
     }
-    // Por capa, los extremos (posición, fila) de cada tramo que sale de ella.
-    type Ends = ((usize, i32), (usize, i32));
     let mut by_layer: Vec<Vec<Ends>> = vec![Vec::new(); layers.len()];
     for s in segments {
         by_layer[vertices[s.from].layer].push(((pos[s.from], s.from_row), (pos[s.to], s.to_row)));
@@ -337,7 +374,7 @@ fn place_vertically(
     vertices: &[Vertex],
     segments: &[Segment],
     layers: &[Vec<usize>],
-    spacing: &Spacing,
+    spacing: Spacing,
 ) -> Result<Vec<i32>> {
     let mut arcs = Vec::new();
     for layer in layers {
@@ -387,7 +424,7 @@ fn route(
     segments: &[Segment],
     layers: &[Vec<usize>],
     ys: &[i32],
-    spacing: &Spacing,
+    spacing: Spacing,
 ) -> Placement {
     let widths: Vec<i32> = layers
         .iter()

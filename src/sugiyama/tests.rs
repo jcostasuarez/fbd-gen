@@ -1,5 +1,33 @@
 use super::*;
 
+/// Pseudoaleatorio determinista (LCG de Knuth) para los tests con grafos al azar.
+pub(super) struct Lcg(u64);
+
+impl Lcg {
+    const MULTIPLIER: u64 = 6_364_136_223_846_793_005;
+    const INCREMENT: u64 = 1_442_695_040_888_963_407;
+
+    pub(super) fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    /// Entero uniforme en `0..m`.
+    pub(super) fn below(&mut self, m: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(Self::MULTIPLIER)
+            .wrapping_add(Self::INCREMENT);
+        let m = u64::try_from(m).expect("cota de prueba en u64");
+        usize::try_from((self.0 >> 33) % m).expect("menor que la cota")
+    }
+
+    /// Entero uniforme en `0..m`, para filas y medidas de la grilla.
+    pub(super) fn below_i32(&mut self, m: i32) -> i32 {
+        let m = usize::try_from(m).expect("cota de prueba positiva");
+        i32::try_from(self.below(m)).expect("menor que la cota")
+    }
+}
+
 const SPACING: Spacing = Spacing { node: 2, layer: 3 };
 
 /// Polilínea completa de cada cable: puerto de salida, quiebres, puerto de entrada.
@@ -143,32 +171,26 @@ fn cycles_are_rejected() {
 
 #[test]
 fn random_networks_respect_the_invariants() {
-    let mut seed = 99u64;
-    let mut next = |m: u64| {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 33) % m
-    };
+    let mut rng = Lcg::new(99);
     for case in 0..1000 {
-        let n = 1 + next(30) as usize;
+        let n = 1 + rng.below(30);
         let mut nodes = Vec::new();
         let mut ports = Vec::new();
         for _ in 0..n {
-            let (ins, outs) = (1 + next(5) as i32, 1 + next(3) as i32);
+            let (ins, outs) = (1 + rng.below_i32(5), 1 + rng.below_i32(3));
             nodes.push(node(
-                5 + next(14) as i32,
-                4 + ins.max(outs) + next(2) as i32,
+                5 + rng.below_i32(14),
+                4 + ins.max(outs) + rng.below_i32(2),
             ));
             ports.push((ins, outs));
         }
         let mut edges = Vec::new();
         let mut driven = std::collections::HashSet::new();
-        for _ in 0..n + next(2 * n as u64) as usize {
-            let (a, b) = (next(n as u64) as usize, next(n as u64) as usize);
-            let to_row = 4 + next(ports[b].0 as u64) as i32;
+        for _ in 0..n + rng.below(2 * n) {
+            let (a, b) = (rng.below(n), rng.below(n));
+            let to_row = 4 + rng.below_i32(ports[b].0);
             if a < b && driven.insert((b, to_row)) {
-                edges.push(edge(a, 4 + next(ports[a].1 as u64) as i32, b, to_row));
+                edges.push(edge(a, 4 + rng.below_i32(ports[a].1), b, to_row));
             }
         }
         let p = layout(&nodes, &edges, &SPACING).unwrap();

@@ -11,7 +11,7 @@
 use std::fmt::Write as _;
 
 use crate::layout::Layout;
-use crate::model::*;
+use crate::model::{Dir, Param, Pin, Section};
 use crate::types::TypedVar;
 use crate::xml::escape as esc;
 
@@ -25,7 +25,7 @@ const HEADER_DATE_TIME: &str = "date_and_time#2026-1-1-0:0:0";
 const HEADER_CONTENT: &str = "Derived Function Block source file";
 
 /// Nombre con el que el XML identifica cada bloque: la instancia de EFB/DFB o `.N` para EF.
-pub fn object_names(section: &Section) -> Vec<String> {
+pub(crate) fn object_names(section: &Section) -> Vec<String> {
     let mut ef = 0;
     section
         .blocks
@@ -40,7 +40,7 @@ pub fn object_names(section: &Section) -> Vec<String> {
         .collect()
 }
 
-pub fn to_exchange_xml(
+pub(crate) fn to_exchange_xml(
     section: &Section,
     layout: &Layout,
     task: &str,

@@ -1,3 +1,12 @@
+//! Registra la interfaz de una DFB propia desde Rust y genera una sección que la usa.
+//!
+//! `cargo run --example api_custom_dfb`: el XML va a stdout y el resumen a stderr.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "el ejemplo muestra su resultado en la terminal"
+)]
+
 use fbd_gen::{BlockDefinition, Generator, ProgramSpec};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

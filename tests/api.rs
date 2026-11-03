@@ -1,3 +1,5 @@
+//! API pública: entradas, errores tipados y registro de bloques propios.
+
 use std::path::Path;
 
 use fbd_gen::{
@@ -7,7 +9,7 @@ use fbd_gen::{
 
 fn generator() -> Generator {
     Generator::from_library_file(Path::new(env!("CARGO_MANIFEST_DIR")).join("efb_dimensions.json"))
-        .unwrap()
+        .expect("efb_dimensions.json es la librería del repositorio")
 }
 
 #[test]
@@ -265,7 +267,7 @@ fn invalid_dfb_interfaces_do_not_enter_the_catalog() {
         BlockDefinition::dfb("Bad", 10).input("X", "BOOL", u32::MAX),
         // Tope de 1000 celdas: un ancho o una fila absurda desbordaría el layout.
         BlockDefinition::dfb("Bad", 1001),
-        BlockDefinition::dfb("Bad", i32::MAX as u32),
+        BlockDefinition::dfb("Bad", i32::MAX.unsigned_abs()),
         BlockDefinition::dfb("Bad", 10).input("X", "BOOL", 997),
         BlockDefinition::dfb("Bad", 10).input("EN", "BOOL", 1),
         BlockDefinition::dfb("Bad", 10)
@@ -354,6 +356,7 @@ fn cli_accepts_custom_dfb_catalog_and_preserves_the_manifest_format() {
 }
 
 #[test]
+#[cfg(feature = "embedded-library")]
 fn programs_write_the_same_files_as_the_cli() {
     let json = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/planta_bombas.json"),

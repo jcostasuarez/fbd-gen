@@ -209,7 +209,7 @@ para que las cuentas enteras no desborden, y pasarlos es un error.
 ## Pruebas locales
 
 ```bash
-cargo test --all-targets
+cargo test --all-targets --all-features
 ```
 
 El motor se prueba con invariantes sobre 1000 redes pseudoaleatorias (sin superposiciones,
@@ -221,6 +221,42 @@ escalares y literales tipados.
 `examples/probes/fanout_order.json` permite inspeccionar también el layout generado
 cuando los consumidores están declarados antes que la fuente. Estas pruebas no
 reemplazan la compilación y el round-trip en Control Expert descritos arriba.
+
+## Estilo y chequeos
+
+El crate sigue las recomendaciones de [BeautifulRust](https://github.com/morganlinton/BeautifulRust),
+que resume las [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/),
+[*Effective Rust*](https://www.lurklurk.org/effective-rust/),
+[Rust Design Patterns](https://rust-unofficial.github.io/patterns/) y las guías de
+[Google](https://google.github.io/styleguide/rustguide.html) y
+[Microsoft](https://microsoft.github.io/rust-guidelines/). Los lints están en `[lints]` de
+`Cargo.toml` y en `clippy.toml`: sin `unwrap` fuera de tests, sin `as` que pierda datos,
+sin `bool` como parámetro, toda la API pública documentada (con `# Errors`) y cada
+supresión con `#[expect(..., reason = "...")]`. Antes de subir cambios:
+
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+cargo test --no-default-features
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+```
+
+CI (`.github/workflows/ci.yml`) corre lo mismo para cada combinación de features y
+compila con la versión mínima de Rust declarada en `rust-version` (1.88).
+
+La entrada la escribe un LLM, así que el generador no debe entrar en pánico con ningún
+JSON: un error de validación es un resultado válido, un pánico es un bug. `fuzz/` tiene
+un target de [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) que prueba
+`ProgramSpec`, `SectionSpec` y `FunctionCallSpec` arbitrarios (requiere nightly):
+
+```bash
+cargo +nightly fuzz run generate -- -max_total_time=300
+```
+
+Conviene empezar con los ejemplos como corpus inicial:
+`mkdir -p fuzz/corpus/generate && cp examples/*.json examples/probes/*.json fuzz/corpus/generate/`.
+CI lo corre un minuto en cada cambio.
 
 ## Licencia
 

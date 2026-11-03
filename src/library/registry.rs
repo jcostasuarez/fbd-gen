@@ -11,22 +11,31 @@ use crate::iec::is_identifier as identifier;
 /// Tope del ancho de un bloque y de la última fila de sus pines, en celdas. La librería
 /// de Control Expert 15.1 llega a 20 de ancho y a la posición 34: el tope solo descarta
 /// definiciones absurdas, que harían desbordar las cuentas enteras del layout.
-pub const MAX_BLOCK_CELLS: u32 = 1000;
+pub(super) const MAX_BLOCK_CELLS: u32 = 1000;
 
 /// Errores de lectura y registro del catálogo, sin reemplazos implícitos.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum LibraryError {
+    /// No se pudo leer un archivo de catálogo.
     Io {
+        /// Archivo que se intentó leer.
         path: PathBuf,
+        /// Error del sistema operativo.
         source: std::io::Error,
     },
+    /// El catálogo no es JSON válido o no tiene el formato esperado.
     Json(serde_json::Error),
+    /// Ya hay un bloque con ese nombre (sin distinguir mayúsculas).
     DuplicateBlock {
+        /// Nombre repetido.
         name: String,
     },
+    /// Una definición no pasa la validación: nombre, tipos, dimensiones o pines.
     InvalidDefinition {
+        /// Bloque rechazado.
         block: String,
+        /// Regla que no cumple.
         message: String,
     },
 }
@@ -56,6 +65,21 @@ impl Error for LibraryError {
 
 impl BlockDef {
     /// Define la interfaz y geometría de una DFB; no contiene su implementación IEC.
+    /// `width` va en celdas de grilla; los pines se agregan con [`BlockDef::input`],
+    /// [`BlockDef::output`] y [`BlockDef::in_out`].
+    ///
+    /// ```
+    /// use fbd_gen::{BlockDefinition, Library};
+    ///
+    /// let mut library = Library::default();
+    /// library.register(
+    ///     BlockDefinition::dfb("MotorPropio", 12)
+    ///         .input("Enable", "BOOL", 1)
+    ///         .output("Running", "BOOL", 1),
+    /// )?;
+    /// assert!(library.get("motorpropio").is_some());
+    /// # Ok::<(), fbd_gen::LibraryError>(())
+    /// ```
     pub fn dfb(name: impl Into<String>, width: u32) -> Self {
         Self {
             name: name.into(),
@@ -70,6 +94,7 @@ impl BlockDef {
     }
 
     /// `position` empieza en 1. La fila de grilla incluye además la cabecera del bloque.
+    #[must_use]
     pub fn input(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
         self.inputs.push(PinDef {
             name: name.into(),
@@ -80,6 +105,8 @@ impl BlockDef {
         self
     }
 
+    /// Agrega una salida en la posición `position` de su lado (desde 1).
+    #[must_use]
     pub fn output(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
         self.outputs.push(PinDef {
             name: name.into(),
@@ -90,6 +117,8 @@ impl BlockDef {
         self
     }
 
+    /// Agrega un pin IN_OUT en la posición `position` de ambos lados (desde 1).
+    #[must_use]
     pub fn in_out(mut self, name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
         self.in_outs.push(PinDef {
             name: name.into(),
@@ -193,12 +222,25 @@ fn validate(def: &BlockDef) -> Result<(), LibraryError> {
 
 impl Library {
     /// Registra una EF/EFB/DFB propia. Rechaza duplicados sin distinguir mayúsculas.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::InvalidDefinition`] si la interfaz es inválida y
+    /// [`LibraryError::DuplicateBlock`] si el nombre ya existe.
     pub fn register(&mut self, definition: BlockDef) -> Result<(), LibraryError> {
-        self.register_all(vec![definition])
+        self.register_all([definition])
     }
 
     /// Registro atómico: si una definición falla, el catálogo no se modifica.
-    pub fn register_all(&mut self, definitions: Vec<BlockDef>) -> Result<(), LibraryError> {
+    ///
+    /// # Errors
+    ///
+    /// Los mismos que [`Library::register`] para la primera definición que falla.
+    pub fn register_all(
+        &mut self,
+        definitions: impl IntoIterator<Item = BlockDef>,
+    ) -> Result<(), LibraryError> {
+        let definitions: Vec<BlockDef> = definitions.into_iter().collect();
         let mut names = HashSet::new();
         for def in &definitions {
             validate(def)?;
@@ -216,6 +258,11 @@ impl Library {
     }
 
     /// Carga extensiones con formato `{ "blocks": [BlockDefinition, ...] }`.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Json`] si el texto no tiene ese formato; además los de
+    /// [`Library::register_all`].
     pub fn extend_from_json(&mut self, json: &str) -> Result<(), LibraryError> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -226,6 +273,11 @@ impl Library {
         self.register_all(extensions.blocks)
     }
 
+    /// Carga extensiones desde un archivo con el formato de [`Library::extend_from_json`].
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Io`] si no se puede leer; además los de [`Library::extend_from_json`].
     pub fn extend_from_file(&mut self, path: impl AsRef<Path>) -> Result<(), LibraryError> {
         let path = path.as_ref();
         let json = std::fs::read_to_string(path).map_err(|source| LibraryError::Io {
