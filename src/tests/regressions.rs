@@ -63,7 +63,11 @@ fn fanout_order_does_not_reintroduce_feedback_dependencies() {
     let mut d = Diagnostics::default();
     let mut section = resolve::resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut section, &NormalizeConfig { max_fanout: 0 }, &mut d);
-    assert!(section.wires.is_empty());
+    assert!(
+        section.wires.is_empty(),
+        "cables inesperados: {:?}",
+        section.wires
+    );
     assert_eq!(
         normalize::ordered_networks(&section).unwrap(),
         [vec![0], vec![1]]
@@ -87,7 +91,11 @@ fn reconverging_fanout_keeps_wires_when_network_order_is_not_enough() {
     let mut section = resolve::resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut section, &NormalizeConfig { max_fanout: 1 }, &mut d);
     assert_eq!(section.wires.len(), 4);
-    assert!(section.generated_vars.is_empty());
+    assert!(
+        section.generated_vars.is_empty(),
+        "variables generadas inesperadas: {:?}",
+        section.generated_vars
+    );
     assert_eq!(
         normalize::ordered_networks(&section).unwrap(),
         [vec![0, 1, 2, 3]]

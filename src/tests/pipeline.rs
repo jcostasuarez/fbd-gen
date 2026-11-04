@@ -153,7 +153,7 @@ fn fanout_becomes_variable() {
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut sec, &NormalizeConfig { max_fanout: 2 }, &mut d);
-    assert!(sec.wires.is_empty());
+    assert!(sec.wires.is_empty(), "cables inesperados: {:?}", sec.wires);
     assert_eq!(normalize::ordered_networks(&sec).unwrap().len(), 4);
 }
 

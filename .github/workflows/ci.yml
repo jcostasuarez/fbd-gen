@@ -35,7 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Versión fija: cada Rust estable trae lints nuevos y con `-D warnings` un
+      # cambio ajeno al repo rompería el CI. Subirla a propósito y corregir lo que marque.
+      - uses: dtolnay/rust-toolchain@1.99
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2

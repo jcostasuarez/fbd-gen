@@ -1,0 +1,128 @@
+name: Release
+
+# Al subir un tag `vX.Y.Z`: verifica, compila los ejecutables y crea el release de
+# GitHub con las notas de esa versión en CHANGELOG.md. Ver "Publicar una versión" en el
+# README.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  verify:
+    name: Verificar
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: El tag coincide con Cargo.toml y con CHANGELOG.md
+        id: version
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "fbd-gen") | .version')"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::El tag ${GITHUB_REF_NAME} no coincide con la versión de Cargo.toml (${version})"
+            exit 1
+          fi
+          if ! grep -q "^## \[${version}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md no tiene la sección ## [${version}]"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - run: cargo test --all-targets --locked
+      - run: cargo package --locked
+
+  build:
+    name: Ejecutable (${{ matrix.target }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows es donde corre Control Expert. CRT estático: no necesita el
+          # redistribuible de Visual C++.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            rustflags: -C target-feature=+crt-static
+          # musl: estático, corre en cualquier distribución.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            rustflags: ""
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      NAME: fbd-gen-v${{ needs.verify.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Empaquetar
+        shell: bash
+        run: |
+          mkdir -p "dist/${NAME}"
+          exe=fbd-gen
+          if [ "${{ runner.os }}" = "Windows" ]; then exe=fbd-gen.exe; fi
+          cp "target/${{ matrix.target }}/release/${exe}" "dist/${NAME}/"
+          cp README.md CHANGELOG.md LICENSE "dist/${NAME}/"
+          cp -r examples "dist/${NAME}/"
+          rm -f "dist/${NAME}"/examples/*.rs
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "${NAME}.zip" "${NAME}" > /dev/null
+          else
+            tar czf "${NAME}.tar.gz" "${NAME}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Release de GitHub
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Notas y sumas SHA-256
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          # La sección de esta versión, sin su encabezado, hasta la siguiente.
+          awk -v v="## [${VERSION}]" '
+            index($0, v) == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          cat notes.md
+          cat dist/SHA256SUMS.txt
+      - name: Crear el release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "fbd-gen ${VERSION}" \
+            --notes-file notes.md \
+            --verify-tag
