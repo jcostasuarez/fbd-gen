@@ -7,6 +7,9 @@ rust-version = "1.88"
 description = "Genera secciones FBD de Control Expert a partir de un grafo semántico, con layout Sugiyama en celdas enteras"
 license = "MIT"
 repository = "https://github.com/jcostasuarez/fbd-gen"
+readme = "README.md"
+keywords = ["plc", "fbd", "iec-61131", "control-expert", "graph-layout"]
+categories = ["command-line-utilities", "visualization", "science::robotics"]
 
 [features]
 default = ["cli", "embedded-library"]

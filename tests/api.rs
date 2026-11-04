@@ -23,8 +23,14 @@ fn owned_results_expose_layout_and_all_variables_without_json_parsing() {
     assert_eq!(result.name, "P101_Motor");
     assert_eq!(result.sections.len(), 1);
     let section = &result.sections[0];
-    assert!(!section.layout.blocks.is_empty());
-    assert!(!section.layout.links.is_empty());
+    assert!(
+        !section.layout.blocks.is_empty(),
+        "la sección no tiene bloques"
+    );
+    assert!(
+        !section.layout.links.is_empty(),
+        "la sección no tiene cables"
+    );
     assert!(section.variables.iter().any(|v| v.ty == "TON"));
     for var in &section.variables {
         assert!(section.xml.contains(&format!(
@@ -82,7 +88,10 @@ fn invalid_graphs_return_typed_errors() {
     let mut spec = ProgramSpec::new("Bad");
     spec.blocks.push(BlockSpec::new("n", "MissingBlock"));
     let error = generator.generate_program(&spec).unwrap_err();
-    assert!(!error.diagnostics().is_empty());
+    assert!(
+        !error.diagnostics().is_empty(),
+        "el error no trae diagnósticos"
+    );
     assert!(matches!(error, GenerationError::InvalidInput { ref scope, .. } if scope == "Bad"));
 
     let spec: SectionSpec = serde_json::from_str(

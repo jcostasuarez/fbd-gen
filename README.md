@@ -6,6 +6,15 @@ valida contra la librería de bloques y lo dibuja con un Sugiyama propio en celd
 
 ## Uso
 
+Cada [release](https://github.com/jcostasuarez/fbd-gen/releases) trae el ejecutable para
+Windows y Linux, sin dependencias: descomprimir y correr.
+
+```bash
+fbd-gen examples/planta_bombas.json
+```
+
+Desde el código fuente, con Rust 1.88 o posterior:
+
 ```bash
 cargo run -- examples/planta_bombas.json
 ```
@@ -288,6 +297,22 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 CI (`.github/workflows/ci.yml`) corre lo mismo para cada combinación de features, en
 Linux y Windows, más las propiedades extendidas, el paquete y la versión mínima de Rust
 declarada en `rust-version` (1.88).
+
+## Publicar una versión
+
+1. Subir `version` en `Cargo.toml` y pasar lo de `[Sin publicar]` de `CHANGELOG.md` a la
+   nueva versión, con la fecha.
+2. Mergear eso en `main` con el CI en verde.
+3. Crear el tag y subirlo:
+
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+`.github/workflows/release.yml` verifica que el tag coincida con `Cargo.toml`, corre los
+tests, compila los ejecutables de Windows y Linux y crea el release de GitHub con las
+notas de esa versión del `CHANGELOG.md`.
 
 ## Licencia
 
