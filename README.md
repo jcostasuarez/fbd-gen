@@ -300,19 +300,15 @@ declarada en `rust-version` (1.88).
 
 ## Publicar una versión
 
-1. Subir `version` en `Cargo.toml` y pasar lo de `[Sin publicar]` de `CHANGELOG.md` a la
-   nueva versión, con la fecha.
-2. Mergear eso en `main` con el CI en verde.
-3. Crear el tag y subirlo:
+1. En un PR, subir `version` en `Cargo.toml` y pasar lo de `[Sin publicar]` de
+   `CHANGELOG.md` a la nueva versión, con la fecha.
+2. Mergearlo en `main` con el CI en verde.
 
-   ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-
-`.github/workflows/release.yml` verifica que el tag coincida con `Cargo.toml`, corre los
-tests, compila los ejecutables de Windows y Linux y crea el release de GitHub con las
-notas de esa versión del `CHANGELOG.md`.
+Al llegar a `main` una versión sin tag, `.github/workflows/release.yml` verifica que
+`CHANGELOG.md` tenga su sección, corre los tests, compila los ejecutables de Windows y
+Linux y crea el tag `vX.Y.Z` y el release de GitHub con las notas de esa versión. Los
+merges que no cambian la versión no publican nada. También se puede publicar subiendo
+el tag a mano (`git push origin v0.2.0`), que tiene que coincidir con `Cargo.toml`.
 
 ## Licencia
 

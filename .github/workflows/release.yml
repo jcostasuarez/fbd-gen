@@ -1,14 +1,25 @@
 name: Release
 
-# Al subir un tag `vX.Y.Z`: verifica, compila los ejecutables y crea el release de
-# GitHub con las notas de esa versión en CHANGELOG.md. Ver "Publicar una versión" en el
-# README.
+# Publica la versión de Cargo.toml cuando todavía no tiene release:
+# - al llegar a `main` (merge de un PR que sube `version`), crea el tag `vX.Y.Z` y el
+#   release; si el tag ya existe no hace nada más que verificarlo;
+# - al subir a mano un tag `vX.Y.Z`, que tiene que coincidir con Cargo.toml;
+# - a pedido (`workflow_dispatch`) desde `main`.
+# Compila los ejecutables y crea el release de GitHub con las notas de esa versión en
+# CHANGELOG.md. Ver "Publicar una versión" en el README.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# Dos merges seguidos no publican la misma versión dos veces.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,31 +30,52 @@ jobs:
     name: Verificar
     runs-on: ubuntu-latest
     outputs:
+      release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: El tag coincide con Cargo.toml y con CHANGELOG.md
+      - name: Versión a publicar
         id: version
         run: |
           version="$(cargo metadata --no-deps --format-version 1 --locked \
             | jq -r '.packages[] | select(.name == "fbd-gen") | .version')"
-          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
-            echo "::error::El tag ${GITHUB_REF_NAME} no coincide con la versión de Cargo.toml (${version})"
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME}" != "${tag}" ]; then
+              echo "::error::El tag ${GITHUB_REF_NAME} no coincide con la versión de Cargo.toml (${version})"
+              exit 1
+            fi
+          elif [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "::error::Solo se publica desde main, no desde ${GITHUB_REF_NAME}"
             exit 1
+          elif [ -n "$(git ls-remote --tags origin "refs/tags/${tag}")" ]; then
+            echo "${tag} ya existe: nada que publicar."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
           if ! grep -q "^## \[${version}\]" CHANGELOG.md; then
             echo "::error::CHANGELOG.md no tiene la sección ## [${version}]"
             exit 1
           fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - run: cargo test --all-targets --locked
-      - run: cargo package --locked
+          echo "Se publica ${tag}."
+          echo "release=true" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.release == 'true'
+      - if: steps.version.outputs.release == 'true'
+        run: cargo test --all-targets --locked
+      - if: steps.version.outputs.release == 'true'
+        run: cargo package --locked
 
   build:
     name: Ejecutable (${{ matrix.target }})
     needs: verify
+    if: needs.verify.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +126,7 @@ jobs:
   release:
     name: Release de GitHub
     needs: [verify, build]
+    if: needs.verify.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -121,8 +154,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.verify.outputs.version }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        # Si el tag no existe, gh lo crea en este commit. Un tag creado con
+        # GITHUB_TOKEN no vuelve a disparar este workflow.
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
+          gh release create "${TAG}" dist/* \
+            --target "${GITHUB_SHA}" \
             --title "fbd-gen ${VERSION}" \
-            --notes-file notes.md \
-            --verify-tag
+            --notes-file notes.md
