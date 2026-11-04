@@ -10,7 +10,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::graph::UnionFind;
 use crate::iec::{is_literal, var_root};
 use crate::library::Kind;
-use crate::model::{Diagnostics, Level, Param, PinRef, Section, Stage, VarSpec};
+use crate::model::{
+    DiagnosticCode as Code, Diagnostics, Level, Param, PinRef, Section, Stage, VarSpec,
+};
 
 const STAGE: Stage = Stage::Types;
 
@@ -167,14 +169,17 @@ fn check_init(decl: &VarSpec, diags: &mut Diagnostics) {
     } else {
         return;
     };
-    diags.push(
-        Level::Error,
-        STAGE,
-        format!(
-            "variable {} ({}): el valor inicial \"{init}\" {problem}",
-            decl.name, decl.ty
-        ),
-    );
+    diags
+        .push(
+            Level::Error,
+            STAGE,
+            Code::InvalidInitialValue,
+            format!(
+                "variable {} ({}): el valor inicial \"{init}\" {problem}",
+                decl.name, decl.ty
+            ),
+        )
+        .at_variable(&decl.name);
 }
 
 /// Tipo concreto que impone un pin, una declaración o un literal tipado, con su origen
@@ -210,7 +215,7 @@ pub(crate) fn infer(
         .collect();
     let graph = TypeGraph::new(section, declared);
     let classes = Classes::new(graph);
-    classes.report_conflicts(diags);
+    classes.report_conflicts(section, diags);
     for (&r, &n) in &classes.pin_node {
         section.pin_mut(r).inferred = classes.type_of(classes.class_of[n]);
     }
@@ -377,7 +382,7 @@ impl Classes {
 
     /// Una clase (cables, variables y pines genéricos unidos) tiene que tener un solo
     /// tipo concreto. Entre elementales es un error seguro de compilación.
-    fn report_conflicts(&self, diags: &mut Diagnostics) {
+    fn report_conflicts(&self, section: &Section, diags: &mut Diagnostics) {
         let mut class_vars: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
         for (i, name) in self.var_names.iter().enumerate() {
             class_vars.entry(self.var_class(i)).or_default().push(name);
@@ -390,18 +395,27 @@ impl Classes {
                 } else {
                     Level::Warning
                 };
-                let subject = class_vars
-                    .get(class)
+                let vars = class_vars.get(class);
+                let subject = vars
                     .map(|v| format!("{}: ", v.join(", ")))
                     .unwrap_or_default();
-                diags.push(
+                let d = diags.push(
                     level,
                     STAGE,
+                    Code::TypeMismatch,
                     format!(
                         "{subject}tipos incompatibles {} ({}) y {} ({})",
                         first.ty, first.origin, other.ty, other.origin
                     ),
                 );
+                // Ubicación: la variable de la clase o, si no tiene, el pin que impuso el
+                // tipo en conflicto.
+                if let Some(name) = vars.and_then(|v| v.first()) {
+                    d.at_variable(*name);
+                } else if let Some((&r, _)) = self.pin_node.iter().find(|&(_, &n)| n == other.node)
+                {
+                    d.at_pin(section, r);
+                }
             }
         }
     }
@@ -420,15 +434,18 @@ fn check_generic_pins(section: &Section, classes: &Classes, diags: &mut Diagnost
                 None => classes.type_of(class).into_iter().collect(),
             };
             if let Some(ty) = candidates.iter().find(|ty| !accepts_generic(&p.ty, ty)) {
-                diags.push(
-                    Level::Error,
-                    STAGE,
-                    format!(
-                        "{}: el tipo {ty} no pertenece a {}",
-                        section.pin_path(r),
-                        p.ty
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::GenericTypeMismatch,
+                        format!(
+                            "{}: el tipo {ty} no pertenece a {}",
+                            section.pin_path(r),
+                            p.ty
+                        ),
+                    )
+                    .at_pin(section, r);
             }
         }
     }
@@ -463,11 +480,16 @@ fn typed_vars(
                 ty,
                 decl: decl.cloned(),
             }),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UndeducibleType,
+                        format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
+                    )
+                    .at_variable(name);
+            }
         }
     }
 
@@ -489,13 +511,18 @@ fn typed_vars(
                 ty: d.ty.clone(),
                 decl: Some((*d).clone()),
             }),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!(
-                    "{name}: {root} tiene que estar declarada en \"variables\" o ser una instancia"
-                ),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UndeclaredRoot,
+                        format!(
+                            "{name}: {root} tiene que estar declarada en \"variables\" o ser una instancia"
+                        ),
+                    )
+                    .at_variable(name);
+            }
         }
     }
     result
@@ -551,11 +578,16 @@ pub(crate) fn section_vars(
                 ty,
                 decl,
             }),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UndeducibleType,
+                        format!("{name}: no se pudo deducir el tipo; declarala en \"variables\""),
+                    )
+                    .at_variable(name);
+            }
         }
     }
     result

@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::graph::{OnCycle, topo_order as topo_order_of};
 use crate::iec::{sanitize, unique_name};
 use crate::model::{
-    Diagnostics, Level, Param, PartitionSpec, PinRef, Section, Stage, VarSpec, Wire,
+    DiagnosticCode as Code, Diagnostics, Level, Param, PartitionSpec, PinRef, Section, Stage,
+    VarSpec, Wire,
 };
 use crate::types::TypedVar;
 
@@ -103,16 +104,11 @@ pub(crate) fn partition(
     let link_vars = link_across(section, &assignment, &mut parts, vars, diags);
     // Etapa 5: orden de las secciones.
     let order = execution_order(&parts, &assignment.names, diags);
-    let mut parts: Vec<Option<Section>> = parts.into_iter().map(Some).collect();
+    let pos: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+    let mut sections: Vec<(usize, Section)> = parts.into_iter().enumerate().collect();
+    sections.sort_by_key(|(s, _)| pos.get(s).copied());
     Partition {
-        sections: order
-            .iter()
-            .map(|&s| {
-                parts[s]
-                    .take()
-                    .expect("cada sección aparece una vez en el orden")
-            })
-            .collect(),
+        sections: sections.into_iter().map(|(_, s)| s).collect(),
         link_vars,
     }
 }
@@ -208,7 +204,7 @@ fn subdivide(
     for ((group, stage), blocks) in keys.into_iter().zip(members) {
         let key = sanitize(&match stage {
             Some(stage) => format!("{group}_{stage}"),
-            None => group,
+            None => group.clone(),
         });
         if blocks.len() <= max {
             names.push(key);
@@ -216,9 +212,10 @@ fn subdivide(
             continue;
         }
         let chunks = split(section, &topo_order(section, &blocks), max);
-        diags.push(
+        let d = diags.push(
             Level::Info,
             STAGE,
+            Code::SectionSplit,
             format!(
                 "{key}: {} bloques > {}, dividida en {} secciones",
                 blocks.len(),
@@ -226,6 +223,11 @@ fn subdivide(
                 chunks.len()
             ),
         );
+        // Sin `group` explícito los bloques van a la sección del programa: no hay
+        // equipo que señalar.
+        if blocks.iter().any(|&b| section.blocks[b].group.is_some()) {
+            d.at_group(&group);
+        }
         for (i, c) in chunks.into_iter().enumerate() {
             names.push(format!("{key}_{}", i + 1));
             groups.push(c);
@@ -254,11 +256,14 @@ fn dedupe_names(names: &mut [String], diags: &mut Diagnostics) {
             }
             suffix += 1;
         }
-        diags.push(
-            Level::Info,
-            STAGE,
-            format!("nombre de sección {base} repetido; se usa {name}"),
-        );
+        diags
+            .push(
+                Level::Info,
+                STAGE,
+                Code::SectionRenamed,
+                format!("nombre de sección {base} repetido; se usa {name}"),
+            )
+            .at_section(name.as_str());
     }
 }
 
@@ -291,12 +296,12 @@ fn check_cohesion(section: &Section, assignment: &Assignment, diags: &mut Diagno
         {
             diags.push(
                 Level::Warning,
-                STAGE,
+                STAGE, Code::WeakCohesion,
                 format!(
                     "{} está en {} pero tiene {n} conexiones con {} y {own} con la suya; revisar su `group`",
                     blk.id, names[sec_of[b]], names[s]
                 ),
-            );
+            ).at_block(&blk.id).at_section(&names[sec_of[b]]);
         }
     }
 }
@@ -355,30 +360,36 @@ fn link_across(
                     let comment = format!("Enlace {} -> {}", names[from_sec], names[to_sec]);
                     match link_var(section, *w, &name, comment) {
                         Some(var) => link_vars.push(var),
-                        None => diags.push(
+                        None => {
+                            diags.push(
                             Level::Error,
-                            STAGE,
+                            STAGE, Code::UndeducibleType,
                             format!(
                                 "{name}: no se pudo deducir el tipo del enlace entre secciones"
                             ),
-                        ),
+                        ).at_pin(section, w.from).at_variable(&name);
+                        }
                     }
                 }
                 cross_var.insert(w.from, name.clone());
                 name
             }
         };
-        diags.push(
-            Level::Info,
-            STAGE,
-            format!(
-                "{} -> {} cruza de {} a {}: variable {var}",
-                section.pin_path(w.from),
-                section.pin_path(w.to),
-                names[from_sec],
-                names[to_sec]
-            ),
-        );
+        diags
+            .push(
+                Level::Info,
+                STAGE,
+                Code::CrossSectionLink,
+                format!(
+                    "{} -> {} cruza de {} a {}: variable {var}",
+                    section.pin_path(w.from),
+                    section.pin_path(w.to),
+                    names[from_sec],
+                    names[to_sec]
+                ),
+            )
+            .at_pin(section, w.from)
+            .at_variable(&var);
         parts[to_sec].pin_mut(assignment.to_local(w.to)).param_in = Some(Param::Var(var));
     }
     link_vars
@@ -434,11 +445,14 @@ fn execution_order(parts: &[Section], names: &[String], diags: &mut Diagnostics)
     for (v, ws) in &writers {
         if ws.len() > 1 {
             let list: Vec<&str> = ws.iter().map(|&s| names[s].as_str()).collect();
-            diags.push(
-                Level::Warning,
-                STAGE,
-                format!("{v} se escribe en varias secciones: {}", list.join(", ")),
-            );
+            diags
+                .push(
+                    Level::Warning,
+                    STAGE,
+                    Code::MultipleWriters,
+                    format!("{v} se escribe en varias secciones: {}", list.join(", ")),
+                )
+                .at_variable(*v);
         }
     }
     let mut deps: BTreeMap<(usize, usize), Vec<String>> = BTreeMap::new();
@@ -457,20 +471,21 @@ fn execution_order(parts: &[Section], names: &[String], diags: &mut Diagnostics)
         if pos[from] > pos[to] {
             diags.push(
                 Level::Warning,
-                STAGE,
+                STAGE, Code::CircularDependency,
                 format!(
                     "dependencia circular: {} lee {} de {}, que se ejecuta después (valor del scan anterior)",
                     names[*to],
                     vs.join(", "),
                     names[*from]
                 ),
-            );
+            ).at_section(&names[*to]);
         }
     }
     let ordered: Vec<&str> = order.iter().map(|&s| names[s].as_str()).collect();
     diags.push(
         Level::Info,
         STAGE,
+        Code::SectionOrder,
         format!("orden de secciones: {}", ordered.join(" -> ")),
     );
     order

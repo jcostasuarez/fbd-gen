@@ -64,7 +64,10 @@ fn fanout_order_does_not_reintroduce_feedback_dependencies() {
     let mut section = resolve::resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut section, &NormalizeConfig { max_fanout: 0 }, &mut d);
     assert!(section.wires.is_empty());
-    assert_eq!(normalize::networks(&section), [vec![0], vec![1]]);
+    assert_eq!(
+        normalize::ordered_networks(&section).unwrap(),
+        [vec![0], vec![1]]
+    );
     assert_eq!(section.generated_vars.len(), 2);
 }
 
@@ -85,7 +88,10 @@ fn reconverging_fanout_keeps_wires_when_network_order_is_not_enough() {
     normalize::normalize(&mut section, &NormalizeConfig { max_fanout: 1 }, &mut d);
     assert_eq!(section.wires.len(), 4);
     assert!(section.generated_vars.is_empty());
-    assert_eq!(normalize::networks(&section), [vec![0, 1, 2, 3]]);
+    assert_eq!(
+        normalize::ordered_networks(&section).unwrap(),
+        [vec![0, 1, 2, 3]]
+    );
     assert!(
         d.0.iter()
             .any(|d| d.message.contains("se conserva fan-out"))

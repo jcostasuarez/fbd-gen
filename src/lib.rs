@@ -22,6 +22,21 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+// Una entrada inválida es un `Err` con diagnósticos y un invariante roto es
+// `GenerationError::Internal` o `sugiyama::LayoutError::Internal`: el código de producción
+// no tiene caminos explícitos a un panic. Los tests sí pueden usar `unwrap`.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
+
 // Etapas internas: su orden e invariantes no son parte del contrato. Lo público son
 // `Generator`, los tipos que se re-exportan abajo y el motor `sugiyama`.
 mod consistency;
@@ -44,6 +59,11 @@ mod xml;
 #[cfg(test)]
 mod tests;
 
+// Los ejemplos de `docs/API.md` se compilan como doctests: la guía no puede quedar
+// desactualizada respecto de la API.
+#[cfg(doctest)]
+#[doc = include_str!("../docs/API.md")]
+struct ApiGuide;
 /// Versión de `serde_json` cuyo `Error` aparece en esta API ([`LibraryError::Json`],
 /// [`GeneratedSection::layout_json`]). Usarla evita choques si el llamador depende de otra.
 pub use serde_json;
@@ -59,8 +79,9 @@ pub use library::{
     LibraryError, PinDef as PinDefinition,
 };
 pub use model::{
-    BlockSpec, CommentSpec, Diagnostic, Dir as PinDirection, GeneratedVar as GeneratedVariable,
-    Level, LinkSpec, Param as Parameter, PartitionSpec, ProgramSpec, Stage, VarSpec,
+    BlockSpec, CommentSpec, Diagnostic, DiagnosticCode, DiagnosticLocation, Dir as PinDirection,
+    GeneratedVar as GeneratedVariable, Level, LinkSpec, Param as Parameter, PartitionSpec,
+    ProgramSpec, Stage, VarSpec,
 };
 pub use normalize::NormalizeConfig;
 pub use output::{

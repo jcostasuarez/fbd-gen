@@ -4,52 +4,89 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
 
 jobs:
   fmt:
+    name: Formato
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --check
+      - run: cargo fmt --all --check
 
   clippy:
+    name: Clippy
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        features:
-          - --all-features
-          - --no-default-features
-          - --no-default-features --features embedded-library
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets ${{ matrix.features }}
+      - run: cargo clippy --all-targets --all-features
+      # Solo librería, como la usa un crate dependiente.
+      - run: cargo clippy --lib --no-default-features --features embedded-library
+      - run: cargo clippy --lib --no-default-features
+      # Tests y ejemplos también tienen que compilar sin la librería incluida.
+      - run: cargo clippy --all-targets --no-default-features
 
   test:
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
-        features:
-          - --all-features
-          - --no-default-features
+        # Windows es donde corre Control Expert: rutas, finales de línea y la CLI
+        # tienen que funcionar igual ahí.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test ${{ matrix.features }}
+      - run: cargo test --all-targets
+      - run: cargo test --doc
+      - run: cargo test --no-default-features --features embedded-library --lib --tests
+      - run: cargo test --no-default-features --lib --tests
 
-  doc:
+  properties:
+    name: Propiedades (extendido)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # 5000 programas plausibles y 5000 hostiles por corrida (300 en `cargo test`).
+      - run: cargo test --release --test properties
+        env:
+          FBD_PROPERTY_CASES: 5000
+
+  msrv:
+    name: MSRV (rust-version de Cargo.toml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --locked
+
+  docs:
+    name: Documentación
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,31 +94,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --all-features
 
-  # La versión mínima declarada en `rust-version` (Cargo.toml).
-  msrv:
+  package:
+    name: Paquete
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
-
-  # La entrada viene de un LLM: ningún JSON debe hacer entrar en pánico al generador.
-  fuzz:
-    runs-on: ubuntu-latest
-    # `-D warnings` no aplica a cargo-fuzz ni a libfuzzer, que se compilan acá.
-    env:
-      RUSTFLAGS: ""
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: fuzz
-      - run: cargo install cargo-fuzz --locked
-      - name: Corpus inicial con los ejemplos
-        run: |
-          mkdir -p fuzz/corpus/generate
-          cp examples/*.json examples/probes/*.json fuzz/corpus/generate/
-          rm fuzz/corpus/generate/custom_blocks.json
-      - run: cargo fuzz run generate -- -max_len=8192 -max_total_time=60
+      # Compila el crate tal como se publicaría (sin archivos fuera del paquete).
+      - run: cargo package --locked

@@ -154,7 +154,7 @@ fn fanout_becomes_variable() {
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut sec, &NormalizeConfig { max_fanout: 2 }, &mut d);
     assert!(sec.wires.is_empty());
-    assert_eq!(normalize::networks(&sec).len(), 4);
+    assert_eq!(normalize::ordered_networks(&sec).unwrap().len(), 4);
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn commutative_inputs_follow_sources() {
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
     normalize::normalize(&mut sec, &NormalizeConfig::default(), &mut d);
-    let nets = normalize::networks(&sec);
+    let nets = normalize::ordered_networks(&sec).unwrap();
     let lay = place(&mut sec, &nets, &mut d);
 
     // Sin cruces: el orden vertical de las fuentes coincide con el de los pines destino.
@@ -429,7 +429,7 @@ fn network_comment_is_a_header_text_box_in_cells() {
     );
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
-    let nets = normalize::networks(&sec);
+    let nets = normalize::ordered_networks(&sec).unwrap();
     let lay = place(&mut sec, &nets, &mut d);
     assert_eq!(lay.texts.len(), 1);
     let t = &lay.texts[0];
@@ -536,7 +536,7 @@ fn each_network_comment_gets_its_own_box() {
     );
     let mut d = Diagnostics::default();
     let mut sec = resolve(&s, lib(), &mut d).unwrap();
-    let nets = normalize::networks(&sec);
+    let nets = normalize::ordered_networks(&sec).unwrap();
     let lay = place(&mut sec, &nets, &mut d);
     let t: Vec<(&str, i32, i32)> = lay
         .texts

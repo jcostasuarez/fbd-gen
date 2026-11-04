@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::model::{Block, Diagnostics, Level, Param, Pin, PinRef, Section, Stage};
+use crate::model::{
+    Block, DiagnosticCode as Code, Diagnostics, Level, Param, Pin, PinRef, Section, Stage,
+};
 pub(crate) use crate::sugiyama::Pos;
 use crate::sugiyama::{self, MAX_EXTENT};
 
@@ -37,8 +39,9 @@ impl fmt::Display for LayoutError {
 
 impl Error for LayoutError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // `Engine` es transparente: su mensaje ya es el del motor.
         match self {
-            Self::Engine(e) => Some(e),
+            Self::Engine(e) => e.source(),
             Self::Grid(_) => None,
         }
     }
@@ -60,6 +63,7 @@ macro_rules! bail {
 
 /// Medidas del dibujo, en celdas de grilla.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LayoutConfig {
     /// Celdas de ancho cada 10 caracteres de un parámetro actual (variable o literal).
     /// Calibrar contra Control Expert.
@@ -144,9 +148,11 @@ impl Margins {
 
 /// Medida de un bloque (ancho, alto, fila de pin) o de `LayoutConfig` en coordenadas de
 /// grilla. Ambas llegan acotadas: la librería limita los bloques a `MAX_BLOCK_CELLS` y el
-/// generador valida la configuración antes de dibujar.
+/// generador valida la configuración antes de dibujar. Si no lo estuviera, satura en
+/// `MAX_EXTENT`: las sumas de unas pocas medidas siguen entrando en `i32` y el chequeo
+/// de extensión rechaza el dibujo.
 pub(crate) fn coord(n: u32) -> i32 {
-    i32::try_from(n).expect("medida acotada antes del layout")
+    i32::try_from(n).map_or(MAX_EXTENT, |n| n.min(MAX_EXTENT))
 }
 
 /// Cuenta en `u64` llevada a `i32`, topeada justo arriba de `MAX_EXTENT`: un texto
@@ -486,14 +492,17 @@ pub(crate) fn apply_swaps(section: &mut Section, swaps: &[InputSwap], diags: &mu
                 w.to.pin = slot;
             }
         }
-        diags.push(
-            Level::Info,
-            STAGE,
-            format!(
-                "{}: entradas conmutativas reordenadas",
-                section.blocks[swap.block].id
-            ),
-        );
+        diags
+            .push(
+                Level::Info,
+                STAGE,
+                Code::InputsReordered,
+                format!(
+                    "{}: entradas conmutativas reordenadas",
+                    section.blocks[swap.block].id
+                ),
+            )
+            .at_block(&section.blocks[swap.block].id);
     }
 }
 

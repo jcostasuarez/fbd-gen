@@ -12,6 +12,7 @@ use crate::xml::escape as esc;
 /// Sección posicionada: lo que contiene `.layout.json`, en celdas de grilla.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct OutSection {
     /// Nombre de la sección.
     pub name: String,
@@ -31,6 +32,7 @@ pub struct OutSection {
 
 /// Bloque posicionado.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct OutBlock {
     /// Identificador del bloque en el grafo de entrada.
     pub id: String,
@@ -56,6 +58,7 @@ pub struct OutBlock {
 /// Pin posicionado.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct OutPin {
     /// Nombre del pin.
     pub name: String,
@@ -73,6 +76,7 @@ pub struct OutPin {
 
 /// Comentario de red (textBox).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct OutText {
     /// Texto del comentario.
     pub text: String,
@@ -88,6 +92,7 @@ pub struct OutText {
 
 /// Cable entre dos pines.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct OutLink {
     /// Pin de origen, como `bloque.PIN`.
     pub from: String,

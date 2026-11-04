@@ -4,16 +4,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::generator::generate_section_with;
 use crate::library::PinDef;
+use crate::model::Stage;
 use crate::model::default_task;
 use crate::{
-    BlockSpec, Diagnostic, GeneratedSection, GenerationError, Generator, Level, LinkSpec,
-    ProgramSpec, VarSpec,
+    BlockSpec, Diagnostic, DiagnosticCode as Code, GeneratedSection, GenerationError, Generator,
+    Level, LinkSpec, ProgramSpec, VarSpec,
 };
 
 /// Una llamada a una EF/EFB/DFB existente, exportada como una sección de un bloque.
 /// Los mapas relacionan nombres de pines con variables o literales IEC.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct FunctionCallSpec {
     /// Nombre de la sección generada.
     pub name: String,
@@ -43,6 +45,16 @@ pub struct FunctionCallSpec {
 }
 
 impl FunctionCallSpec {
+    /// Como [`ProgramSpec::from_json`], para una llamada.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] con el código `invalid_json` si el texto no es
+    /// JSON válido, le falta un campo obligatorio o tiene uno desconocido.
+    pub fn from_json(json: &str) -> Result<Self, GenerationError> {
+        crate::generator::from_json(json)
+    }
+
     /// Llamada `name` a la función `function`, sin pines asignados.
     pub fn new(name: impl Into<String>, function: impl Into<String>) -> Self {
         Self {
@@ -127,44 +139,52 @@ impl Generator {
         &self,
         spec: &FunctionCallSpec,
     ) -> Result<GeneratedSection, GenerationError> {
-        let invalid = |message: String| GenerationError::InvalidInput {
-            scope: spec.name.clone(),
-            diagnostics: vec![Diagnostic {
-                level: Level::Error,
-                stage: crate::model::Stage::Validate,
-                message,
-            }],
+        // Los errores señalan el pin de la llamada (sus claves en `inputs`, `outputs`...).
+        let invalid_at = |code: Code, pin: Option<&str>, message: String| {
+            let mut d = Diagnostic::new(Level::Error, Stage::Validate, code, message);
+            if let Some(pin) = pin {
+                d.at_pin_name(pin);
+            }
+            GenerationError::InvalidInput {
+                scope: spec.name.clone(),
+                diagnostics: vec![d],
+            }
         };
+        let invalid = |code: Code, message: String| invalid_at(code, None, message);
         let Some(def) = self.library().get(&spec.function) else {
-            return Err(invalid(format!(
-                "tipo de bloque desconocido {}",
-                spec.function
-            )));
+            return Err(invalid(
+                Code::UnknownBlockType,
+                format!("tipo de bloque desconocido {}", spec.function),
+            ));
         };
         if !def.kind.has_instance() && spec.instance.is_some() {
-            return Err(invalid(format!(
-                "{} es una EF y no admite instancia",
-                def.name
-            )));
+            return Err(invalid(
+                Code::InstanceNotAllowed,
+                format!("{} es una EF y no admite instancia", def.name),
+            ));
         }
         if spec.instance.as_ref().is_some_and(|s| s.trim().is_empty()) {
             return Err(invalid(
+                Code::InvalidInstanceName,
                 "el nombre de instancia no puede estar vacío".into(),
             ));
         }
         if let Some(count) = spec.input_count {
             let ext = def.inputs.iter().find_map(|p| p.extensible.as_ref());
             let Some(ext) = ext else {
-                return Err(invalid(format!(
-                    "{} no tiene entradas extensibles",
-                    def.name
-                )));
+                return Err(invalid(
+                    Code::NotExtensible,
+                    format!("{} no tiene entradas extensibles", def.name),
+                ));
             };
             if count < ext.min || count > ext.max {
-                return Err(invalid(format!(
-                    "{}: inputCount {count} fuera de rango {}..={}",
-                    def.name, ext.min, ext.max
-                )));
+                return Err(invalid(
+                    Code::TooManyInputs,
+                    format!(
+                        "{}: inputCount {count} fuera de rango {}..={}",
+                        def.name, ext.min, ext.max
+                    ),
+                ));
             }
         }
         let id = format!("{}_call", crate::iec::sanitize(&spec.name));
@@ -187,31 +207,44 @@ impl Generator {
         ] {
             for (pin, value) in bindings {
                 if !pins.iter().any(|p| matches_pin(p, pin)) {
-                    return Err(invalid(format!(
-                        "{}.{pin}: no es un pin de {role} gráfico válido",
-                        def.name
-                    )));
+                    return Err(invalid_at(
+                        Code::UnknownPin,
+                        Some(pin),
+                        format!("{}.{pin}: no es un pin de {role} gráfico válido", def.name),
+                    ));
                 }
                 if value.trim().is_empty() {
-                    return Err(invalid(format!(
-                        "{}.{pin}: el parámetro actual no puede estar vacío",
-                        def.name
-                    )));
+                    return Err(invalid_at(
+                        Code::InvalidEndpoint,
+                        Some(pin),
+                        format!(
+                            "{}.{pin}: el parámetro actual no puede estar vacío",
+                            def.name
+                        ),
+                    ));
                 }
                 if (is_output || role == "IN_OUT") && crate::iec::is_literal(value) {
-                    return Err(invalid(format!(
-                        "{}.{pin}: {role} requiere una variable, no un literal",
-                        def.name
-                    )));
+                    return Err(invalid_at(
+                        Code::OutputToLiteral,
+                        Some(pin),
+                        format!(
+                            "{}.{pin}: {role} requiere una variable, no un literal",
+                            def.name
+                        ),
+                    ));
                 }
                 if matches!(
                     crate::resolve::parse_endpoint(value, &ids),
                     crate::resolve::Endpoint::Pin { .. }
                 ) {
-                    return Err(invalid(format!(
-                        "{}.{pin}: el parámetro actual debe ser una variable o literal, no un pin",
-                        def.name
-                    )));
+                    return Err(invalid_at(
+                        Code::InvalidEndpoint,
+                        Some(pin),
+                        format!(
+                            "{}.{pin}: el parámetro actual debe ser una variable o literal, no un pin",
+                            def.name
+                        ),
+                    ));
                 }
                 let endpoint = format!("{id}.{pin}");
                 program.links.push(if is_output {

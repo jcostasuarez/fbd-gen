@@ -10,12 +10,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
-use crate::model::{Diagnostics, Level, Param, PinRef, Section, Stage};
+use crate::model::{DiagnosticCode as Code, Diagnostics, Level, Param, PinRef, Section, Stage};
 
 const STAGE: Stage = Stage::Consistency;
 
 /// Opciones del control de consistencia entre equipos (`group`).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ConsistencyConfig {
     /// Similitud mínima (Jaccard sobre rasgos WL) para considerar que un equipo debería
     /// seguir a un típico.
@@ -174,9 +175,7 @@ fn build(section: &Section, name: &str, blocks: &[usize], rounds: usize) -> Grou
     GroupGraph {
         name: name.to_string(),
         blocks: blocks.to_vec(),
-        hash: h(features
-            .last()
-            .expect("features empieza con las etiquetas iniciales")),
+        hash: features.last().map_or(0, h),
         labels,
         features,
         block_types,
@@ -299,49 +298,59 @@ fn literal_outliers(section: &Section, members: &[&GroupGraph], diags: &mut Diag
         if counts.len() < 2 {
             continue;
         }
-        let (majority, n) = counts
+        let Some((majority, n)) = counts
             .iter()
             .max_by_key(|(_, n)| **n)
             .map(|(v, n)| (v.clone(), *n))
-            .expect("hay al menos dos valores distintos");
+        else {
+            continue;
+        };
         // Para mostrar, los valores tal como los escribió un equipo de la mayoría.
-        let shown = per_group
-            .values()
-            .find(|v| key(v) == majority)
-            .expect("la mayoría sale de los valores de los grupos");
+        let Some(shown) = per_group.values().find(|v| key(v) == majority) else {
+            continue;
+        };
         let shown: Vec<&str> = shown.iter().map(|x| x.0.as_str()).collect();
         if n * 2 <= per_group.len() {
             let names: Vec<&str> = per_group
                 .keys()
                 .map(|&gi| members[gi].name.as_str())
                 .collect();
-            diags.push(
-                Level::Info,
-                STAGE,
-                format!(
-                    "{}: el pin {pin} no tiene un valor mayoritario",
-                    names.join(", ")
-                ),
-            );
+            // Abarca a varios equipos: solo el pin, sin el bloque de uno de ellos.
+            diags
+                .push(
+                    Level::Info,
+                    STAGE,
+                    Code::NoMajorityValue,
+                    format!(
+                        "{}: el pin {pin} no tiene un valor mayoritario",
+                        names.join(", ")
+                    ),
+                )
+                .at_pin_name(&pin);
             continue;
         }
         for (gi, vals) in &per_group {
             let v = key(vals);
             if v != majority {
-                diags.push(
-                    Level::Info,
-                    STAGE,
-                    format!(
-                        "{}: {}.{pin} = {} (el resto del típico usa {})",
-                        members[*gi].name,
-                        vals[0].1,
-                        vals.iter()
-                            .map(|x| x.0.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        shown.join(", ")
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Info,
+                        STAGE,
+                        Code::LiteralOutlier,
+                        format!(
+                            "{}: {}.{pin} = {} (el resto del típico usa {})",
+                            members[*gi].name,
+                            vals[0].1,
+                            vals.iter()
+                                .map(|x| x.0.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            shown.join(", ")
+                        ),
+                    )
+                    .at_group(&members[*gi].name)
+                    .at_block(&vals[0].1)
+                    .at_pin_name(&pin);
             }
         }
     }
@@ -371,6 +380,7 @@ pub(crate) fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diag
         diags.push(
             Level::Info,
             STAGE,
+            Code::SharedTypical,
             format!("típico compartido por {}", names.join(", ")),
         );
         let refs: Vec<&GroupGraph> = members.iter().map(|&i| &graphs[i]).collect();
@@ -388,16 +398,19 @@ pub(crate) fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diag
             .max_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((sim, members)) = best.filter(|(s, _)| *s >= cfg.similarity) {
             let names: Vec<&str> = members.iter().map(|&m| graphs[m].name.as_str()).collect();
-            diags.push(
-                Level::Warning,
-                STAGE,
-                format!(
-                    "{} se parece al típico de {} (similitud {sim:.2}) pero difiere: {}",
-                    g.name,
-                    names.join(", "),
-                    describe_diff(g, &graphs[members[0]])
-                ),
-            );
+            diags
+                .push(
+                    Level::Warning,
+                    STAGE,
+                    Code::TypicalDeviation,
+                    format!(
+                        "{} se parece al típico de {} (similitud {sim:.2}) pero difiere: {}",
+                        g.name,
+                        names.join(", "),
+                        describe_diff(g, &graphs[members[0]])
+                    ),
+                )
+                .at_group(&g.name);
         } else if let Some((j, sim)) = graphs
             .iter()
             .enumerate()
@@ -406,16 +419,19 @@ pub(crate) fn check(section: &Section, cfg: &ConsistencyConfig, diags: &mut Diag
             .filter(|(_, s)| *s >= cfg.similarity)
             .max_by(|a, b| a.1.total_cmp(&b.1))
         {
-            diags.push(
-                Level::Info,
-                STAGE,
-                format!(
-                    "{} y {} son casi iguales (similitud {sim:.2}): {}",
-                    g.name,
-                    graphs[j].name,
-                    describe_diff(g, &graphs[j])
-                ),
-            );
+            diags
+                .push(
+                    Level::Info,
+                    STAGE,
+                    Code::NearDuplicate,
+                    format!(
+                        "{} y {} son casi iguales (similitud {sim:.2}): {}",
+                        g.name,
+                        graphs[j].name,
+                        describe_diff(g, &graphs[j])
+                    ),
+                )
+                .at_group(&g.name);
         }
     }
 }

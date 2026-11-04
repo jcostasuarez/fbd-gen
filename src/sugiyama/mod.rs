@@ -20,7 +20,7 @@ use std::error::Error;
 use std::fmt;
 
 use routing::{Route, Trunk};
-use simplex::Arc;
+use simplex::{Arc, Failure};
 
 /// Extensión máxima de un dibujo por eje, en celdas. Con este tope las cuentas en `i32`
 /// del motor (y de quien escale las coordenadas, como una vista previa en píxeles) no
@@ -39,6 +39,7 @@ pub struct Pos {
 /// Caja de un nodo. Los puertos de entrada están en la columna 0 y los de salida en la
 /// columna `width`, cada uno en su fila (relativa al borde superior).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Node {
     /// Ancho en columnas.
     pub width: i32,
@@ -46,8 +47,16 @@ pub struct Node {
     pub height: i32,
 }
 
+impl Node {
+    /// Caja de `width` columnas por `height` filas.
+    pub fn new(width: i32, height: i32) -> Self {
+        Self { width, height }
+    }
+}
+
 /// Cable de la salida `from_row` de `from` a la entrada `to_row` de `to`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Edge {
     /// Índice del nodo de origen.
     pub from: usize,
@@ -59,8 +68,21 @@ pub struct Edge {
     pub to_row: i32,
 }
 
+impl Edge {
+    /// Cable de la fila `from_row` de `from` a la fila `to_row` de `to`.
+    pub fn new(from: usize, from_row: i32, to: usize, to_row: i32) -> Self {
+        Self {
+            from,
+            from_row,
+            to,
+            to_row,
+        }
+    }
+}
+
 /// Separaciones mínimas del dibujo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Spacing {
     /// Filas libres entre dos nodos de una misma capa.
     pub node: i32,
@@ -68,8 +90,16 @@ pub struct Spacing {
     pub layer: i32,
 }
 
+impl Spacing {
+    /// `node` filas entre nodos de una capa y canales de al menos `layer` columnas.
+    pub fn new(node: i32, layer: i32) -> Self {
+        Self { node, layer }
+    }
+}
+
 /// Resultado del layout, indexado como los nodos y cables de entrada.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Placement {
     /// Esquina superior izquierda de cada nodo.
     pub nodes: Vec<Pos>,
@@ -93,6 +123,9 @@ pub enum LayoutError {
     Infeasible,
     /// Un nodo tiene medidas negativas, o el dibujo podría exceder [`MAX_EXTENT`].
     TooLarge,
+    /// Se rompió un invariante interno del motor. No depende de la entrada: es un bug de
+    /// fbd-gen y conviene reportarlo con la entrada que lo produce.
+    Internal(&'static str),
 }
 
 impl fmt::Display for LayoutError {
@@ -102,6 +135,7 @@ impl fmt::Display for LayoutError {
             Self::Cycle => write!(f, "los cables forman un ciclo"),
             Self::Infeasible => write!(f, "restricciones de posición vertical inconsistentes"),
             Self::TooLarge => write!(f, "la red excede {MAX_EXTENT} celdas por eje"),
+            Self::Internal(what) => write!(f, "error interno del motor de layout: {what}"),
         }
     }
 }
@@ -135,9 +169,9 @@ struct Segment {
 /// ```
 /// use fbd_gen::sugiyama::{layout, Edge, Node, Spacing};
 ///
-/// let nodes = [Node { width: 6, height: 4 }, Node { width: 6, height: 4 }];
-/// let edges = [Edge { from: 0, from_row: 2, to: 1, to_row: 2 }];
-/// let placed = layout(&nodes, &edges, &Spacing { node: 2, layer: 3 })?;
+/// let nodes = [Node::new(6, 4), Node::new(6, 4)];
+/// let edges = [Edge::new(0, 2, 1, 2)];
+/// let placed = layout(&nodes, &edges, &Spacing::new(2, 3))?;
 /// // El cable avanza de izquierda a derecha: el destino queda en una capa posterior.
 /// assert!(placed.nodes[1].x > placed.nodes[0].x + nodes[0].width);
 /// # Ok::<(), fbd_gen::sugiyama::LayoutError>(())
@@ -219,13 +253,15 @@ fn split_long_edges(nodes: &[Node], edges: &[Edge]) -> Result<(Vec<Vertex>, Vec<
             weight: 1,
         })
         .collect();
-    let Some(rank) = simplex::solve(nodes.len(), &arcs) else {
-        return Err(LayoutError::Cycle);
-    };
+    let rank = simplex::solve(nodes.len(), &arcs).map_err(|f| match f {
+        Failure::Cycle => LayoutError::Cycle,
+        Failure::Internal(what) => LayoutError::Internal(what),
+    })?;
+    // El simplex normaliza los rangos a partir de 0: uno negativo es un bug.
     let rank: Vec<usize> = rank
         .into_iter()
-        .map(|r| usize::try_from(r).expect("el simplex normaliza los rangos a partir de 0"))
-        .collect();
+        .map(|r| usize::try_from(r).map_err(|_| LayoutError::Internal("rango negativo")))
+        .collect::<Result<_>>()?;
     let mut vertices: Vec<Vertex> = nodes
         .iter()
         .enumerate()
@@ -406,9 +442,10 @@ fn place_vertically(
             });
         }
     }
-    let Some(rank) = simplex::solve(vertices.len() + segments.len(), &arcs) else {
-        return Err(LayoutError::Infeasible);
-    };
+    let rank = simplex::solve(vertices.len() + segments.len(), &arcs).map_err(|f| match f {
+        Failure::Cycle => LayoutError::Infeasible,
+        Failure::Internal(what) => LayoutError::Internal(what),
+    })?;
     // Cada componente queda normalizada por separado; el auxiliar de un tramo puede
     // quedar arriba de sus nodos, así que se vuelve a normalizar sobre los vértices.
     let ys = &rank[..vertices.len()];

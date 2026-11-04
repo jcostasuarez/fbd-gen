@@ -13,10 +13,19 @@ pub(super) struct Arc {
     pub weight: i32,
 }
 
+/// Por qué no hay solución.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Failure {
+    /// Las restricciones tienen un ciclo dirigido.
+    Cycle,
+    /// Se rompió un invariante del método: es un bug, no un problema de la entrada.
+    Internal(&'static str),
+}
+
 /// Rangos óptimos de `n` nodos, con el mínimo de cada componente conexa en 0.
-/// `None` si las restricciones tienen un ciclo dirigido.
-pub(super) fn solve(n: usize, arcs: &[Arc]) -> Option<Vec<i32>> {
-    let mut rank = initial_ranks(n, arcs)?;
+/// `Err` si las restricciones tienen un ciclo dirigido o se rompe un invariante interno.
+pub(super) fn solve(n: usize, arcs: &[Arc]) -> Result<Vec<i32>, Failure> {
+    let mut rank = initial_ranks(n, arcs).ok_or(Failure::Cycle)?;
     let mut adj = vec![Vec::new(); n];
     for (i, a) in arcs.iter().enumerate() {
         adj[a.tail].push(i);
@@ -31,14 +40,14 @@ pub(super) fn solve(n: usize, arcs: &[Arc]) -> Option<Vec<i32>> {
         for &v in &nodes {
             done[v] = true;
         }
-        let mut tree = Tree::feasible(root, &nodes, arcs, &adj, &mut rank);
-        tree.optimize(arcs, &adj, &mut rank);
+        let mut tree = Tree::feasible(root, &nodes, arcs, &adj, &mut rank)?;
+        tree.optimize(arcs, &adj, &mut rank)?;
         let min = nodes.iter().map(|&v| rank[v]).min().unwrap_or(0);
         for &v in &nodes {
             rank[v] -= min;
         }
     }
-    Some(rank)
+    Ok(rank)
 }
 
 fn slack(a: &Arc, rank: &[i32]) -> i32 {
@@ -116,7 +125,7 @@ impl Tree {
         arcs: &[Arc],
         adj: &[Vec<usize>],
         rank: &mut [i32],
-    ) -> Self {
+    ) -> Result<Self, Failure> {
         let n = adj.len();
         let mut is_tree_arc = vec![false; arcs.len()];
         let mut member = vec![false; n];
@@ -150,7 +159,9 @@ impl Tree {
                 .filter(|&i| member[arcs[i].tail] != member[arcs[i].head])
                 .map(|i| (i, slack(&arcs[i], rank)))
                 .min_by_key(|&(i, s)| (s, i))
-                .expect("la componente es conexa");
+                .ok_or(Failure::Internal(
+                    "árbol factible: la componente no es conexa",
+                ))?;
             let shift = if member[arcs[i].tail] { s } else { -s };
             for &v in nodes.iter().filter(|&&v| member[v]) {
                 rank[v] += shift;
@@ -167,7 +178,7 @@ impl Tree {
             lim: vec![0; n],
         };
         tree.index(arcs, adj);
-        tree
+        Ok(tree)
     }
 
     /// Recalcula padre, profundidad y numeración en postorden desde la raíz.
@@ -253,7 +264,12 @@ impl Tree {
         cut
     }
 
-    fn optimize(&mut self, arcs: &[Arc], adj: &[Vec<usize>], rank: &mut [i32]) {
+    fn optimize(
+        &mut self,
+        arcs: &[Arc],
+        adj: &[Vec<usize>],
+        rank: &mut [i32],
+    ) -> Result<(), Failure> {
         // Tope de iteraciones contra ciclos degenerados: lo que haya es factible.
         let cap = 100 * self.nodes.len() + 1000;
         for _ in 0..cap {
@@ -265,7 +281,7 @@ impl Tree {
                 .filter(|&i| self.is_tree_arc[i] && cut[i] < 0)
                 .min_by_key(|&i| (cut[i], i))
             else {
-                return;
+                return Ok(());
             };
             let child = self.child(leave, arcs);
             let child_is_head = arcs[leave].head == child;
@@ -284,7 +300,9 @@ impl Tree {
                     if child_is_head { t && !h } else { !t && h }
                 })
                 .min_by_key(|&i| (slack(&arcs[i], rank), i))
-                .expect("un valor de corte negativo tiene un arco de reemplazo");
+                .ok_or(Failure::Internal(
+                    "un valor de corte negativo no tiene arco de reemplazo",
+                ))?;
             let s = slack(&arcs[enter], rank);
             let shift = if child_is_head { s } else { -s };
             for &v in &self.nodes {
@@ -296,6 +314,8 @@ impl Tree {
             self.is_tree_arc[enter] = true;
             self.index(arcs, adj);
         }
+        // Se alcanzó el tope: la solución actual es factible aunque no sea óptima.
+        Ok(())
     }
 }
 
@@ -347,7 +367,10 @@ mod tests {
 
     #[test]
     fn cycles_are_rejected_and_components_are_solved_apart() {
-        assert!(solve(2, &[arc(0, 1, 1, 1), arc(1, 0, 1, 1)]).is_none());
+        assert_eq!(
+            solve(2, &[arc(0, 1, 1, 1), arc(1, 0, 1, 1)]),
+            Err(Failure::Cycle)
+        );
         let rank = solve(4, &[arc(0, 1, 2, 1), arc(3, 2, 1, 1)]).unwrap();
         assert_eq!(rank, [0, 2, 1, 0]);
     }

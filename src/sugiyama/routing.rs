@@ -113,10 +113,6 @@ fn reaches(adj: &[Vec<usize>], from: usize, to: usize) -> bool {
 
 /// Fila libre del canal para unir las dos mitades de un cable partido: entre sus filas
 /// si se puede, lo más cerca posible del medio.
-#[expect(
-    clippy::maybe_infinite_iter,
-    reason = "`used` es finito: alguna fila fuera de él está libre"
-)]
 fn free_row(src: i32, dst: i32, used: &[i32]) -> i32 {
     let (lo, hi) = (src.min(dst), src.max(dst));
     let mid = lo + (hi - lo) / 2;
@@ -125,10 +121,14 @@ fn free_row(src: i32, dst: i32, used: &[i32]) -> i32 {
     if let Some(r) = inside.filter(|r| lo < *r && *r < hi).find(free) {
         return r;
     }
-    (1..)
-        .flat_map(|d| [hi + d, lo - d])
-        .find(free)
-        .expect("siempre hay una fila libre")
+    // Afuera del intervalo siempre hay una fila libre: `used` es finito.
+    let mut d = 1;
+    loop {
+        if let Some(r) = [hi + d, lo - d].into_iter().find(free) {
+            return r;
+        }
+        d += 1;
+    }
 }
 
 /// Columnas del canal. `rows` son las filas de todos los extremos del canal (también
@@ -152,11 +152,13 @@ pub(super) fn assign(trunks: &[Trunk], rows: &[i32]) -> Channel {
             break;
         };
         let t = &trunks[owner];
-        let nearest = *t
+        // Un tronco siempre tiene destinos; sin ellos, la fila de partida sirve igual.
+        let nearest = t
             .targets
             .iter()
-            .min_by_key(|&&r| (r.abs_diff(t.src), r))
-            .expect("un tronco tiene al menos un destino");
+            .copied()
+            .min_by_key(|&r| (r.abs_diff(t.src), r))
+            .unwrap_or(t.src);
         let row = free_row(t.src, nearest, &used);
         used.push(row);
         split[owner] = Some(row);

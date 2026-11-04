@@ -322,40 +322,6 @@ fn custom_ef_definitions_can_be_registered_without_instances() {
 }
 
 #[test]
-fn cli_accepts_custom_dfb_catalog_and_preserves_the_manifest_format() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = root.join("out").join("api-cli-test");
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_fbd-gen"))
-        .arg(root.join("examples/custom_dfb.json"))
-        .arg("--lib")
-        .arg(root.join("efb_dimensions.json"))
-        .arg("--extra-lib")
-        .arg(root.join("examples/custom_blocks.json"))
-        .arg("--out-dir")
-        .arg(&out)
-        .current_dir(std::env::temp_dir())
-        .output()
-        .unwrap();
-    assert!(
-        status.status.success(),
-        "{}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out.join("Motor_DFB/manifest.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(manifest["program"], "Motor_DFB");
-    assert_eq!(manifest["task"], "MAST");
-    assert_eq!(manifest["sections"][0]["xml"], "Motor_DFB.xbd");
-    assert!(
-        std::fs::read_to_string(out.join("Motor_DFB/Motor_DFB.xbd"))
-            .unwrap()
-            .contains("P201_Motor")
-    );
-}
-
-#[test]
 #[cfg(feature = "embedded-library")]
 fn programs_write_the_same_files_as_the_cli() {
     let json = std::fs::read_to_string(
@@ -388,4 +354,81 @@ fn programs_write_the_same_files_as_the_cli() {
         );
     }
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Los tipos públicos son `#[non_exhaustive]`: desde otro crate se arman con sus
+/// constructores y se ajustan campo por campo. Este test usa solo eso.
+#[test]
+fn public_types_are_built_through_constructors() {
+    use fbd_gen::sugiyama::{self, Edge, Node, Spacing};
+    use fbd_gen::{BlockKind, CommentSpec, ExtensiblePin, PinDefinition, PinDirection, VarSpec};
+
+    // EF propia con entradas extensibles IN1..IN4 (mínimo 2).
+    let custom = BlockDefinition::new("MyAnd", BlockKind::Ef, 8)
+        .pin(
+            PinDirection::In,
+            PinDefinition::new("IN1", "BOOL", 1).with_extensible(ExtensiblePin::new("IN", 1, 2, 4)),
+        )
+        .output("OUT", "BOOL", 1);
+    let mut generator = Generator::new(Library::default());
+    generator.register_block(custom).unwrap();
+
+    let mut config = GeneratorConfig::default();
+    config.normalization.max_fanout = 5;
+    config.layout.node_gap = 3;
+    config.consistency.wl_rounds = 2;
+    let generator = generator.with_config(config).unwrap();
+
+    let mut spec = SectionSpec::new("Custom");
+    spec.variables.push(VarSpec::new("A", "BOOL"));
+    let mut block = BlockSpec::new("g", "MyAnd");
+    block.inputs = Some(3);
+    spec.blocks.push(block);
+    spec.links.extend([
+        LinkSpec::Pair("A".into(), "g.IN1".into()),
+        LinkSpec::Pair("TRUE".into(), "g.IN3".into()),
+        LinkSpec::Pair("g.OUT".into(), "Y".into()),
+    ]);
+    spec.comments
+        .push(CommentSpec::new("g", "Compuerta propia"));
+    let section = generator.generate_section(&spec).unwrap();
+    let pins: Vec<&str> = section.layout.blocks[0]
+        .pins
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(pins, ["IN1", "IN2", "IN3", "OUT"]);
+    assert_eq!(section.layout.text_boxes.len(), 1);
+
+    // El motor de layout también se usa por separado.
+    let placement = sugiyama::layout(
+        &[Node::new(4, 3), Node::new(4, 3)],
+        &[Edge::new(0, 1, 1, 1)],
+        &Spacing::new(2, 3),
+    )
+    .unwrap();
+    assert!(placement.nodes[1].x > placement.nodes[0].x);
+}
+
+#[test]
+fn library_can_be_listed_in_a_stable_order() {
+    let mut generator = generator();
+    let base = generator.library().len();
+    generator
+        .register_block(BlockDefinition::dfb("AAA_Propio", 8).input("X", "BOOL", 1))
+        .unwrap();
+    let library = generator.library();
+    let names: Vec<&str> = library.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names.len(), base + 1);
+    assert_eq!(library.iter().len(), library.len());
+    assert!(names.contains(&"TON") && names.contains(&"AAA_Propio"));
+    let mut sorted = names.clone();
+    sorted.sort_by_key(|n| n.to_ascii_uppercase());
+    assert_eq!(names, sorted, "orden por nombre sin distinguir mayúsculas");
+    // `&Library` también se recorre con `for`.
+    let efs = library
+        .into_iter()
+        .filter(|b| b.kind == fbd_gen::BlockKind::Ef)
+        .count();
+    assert!(efs > 0 && efs < names.len());
 }

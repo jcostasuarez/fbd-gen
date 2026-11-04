@@ -21,6 +21,7 @@ use crate::{consistency, layout, normalize, output, partition, resolve, types, x
 /// Entrada de una sola sección: no acepta opciones de partición.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SectionSpec {
     /// Nombre de la sección: identificador IEC.
     pub name: String,
@@ -40,7 +41,46 @@ pub struct SectionSpec {
     pub comments: Vec<CommentSpec>,
 }
 
+/// Deserializa una entrada; un JSON inválido es `InvalidInput` con `invalid_json`, igual
+/// que cualquier otro error de la entrada.
+pub(crate) fn from_json<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, GenerationError> {
+    serde_json::from_str(json).map_err(|error| GenerationError::InvalidInput {
+        scope: "json".into(),
+        diagnostics: vec![Diagnostic::new(
+            Level::Error,
+            model::Stage::Validate,
+            model::DiagnosticCode::InvalidJson,
+            error.to_string(),
+        )],
+    })
+}
+
+impl ProgramSpec {
+    /// Lee el grafo desde JSON. A diferencia de `serde_json::from_str`, un error de
+    /// formato (sintaxis, campo faltante o desconocido) llega como
+    /// [`GenerationError::InvalidInput`] con el código `invalid_json`, igual que los
+    /// errores de validación: un cliente los trata todos del mismo modo.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] con el código `invalid_json` si el texto no es
+    /// JSON válido, le falta un campo obligatorio o tiene uno desconocido.
+    pub fn from_json(json: &str) -> Result<Self, GenerationError> {
+        from_json(json)
+    }
+}
+
 impl SectionSpec {
+    /// Como [`ProgramSpec::from_json`], para una sola sección.
+    ///
+    /// # Errors
+    ///
+    /// [`GenerationError::InvalidInput`] con el código `invalid_json` si el texto no es
+    /// JSON válido, le falta un campo obligatorio o tiene uno desconocido.
+    pub fn from_json(json: &str) -> Result<Self, GenerationError> {
+        from_json(json)
+    }
+
     /// Sección `name` vacía, en la tarea MAST.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -70,6 +110,7 @@ impl From<SectionSpec> for ProgramSpec {
 
 /// Opciones reutilizables para todas las generaciones de una instancia.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct GeneratorConfig {
     /// Fan-out y realimentaciones.
     pub normalization: NormalizeConfig,
@@ -81,6 +122,7 @@ pub struct GeneratorConfig {
 
 /// Una generación exitosa siempre contiene todas sus secciones, ordenadas.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct GeneratedProgram {
     /// Nombre del programa.
     pub name: String,
@@ -94,6 +136,7 @@ pub struct GeneratedProgram {
 
 /// Resultado propio, sin referencias al generador ni necesidad de parsear JSON.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct GeneratedSection {
     /// Nombre de la sección.
     pub name: String,
@@ -215,12 +258,22 @@ pub enum GenerationError {
     },
     /// No se pudo leer o registrar el catálogo de bloques.
     Library(LibraryError),
-    /// El motor de layout no pudo dibujar la sección dentro de la grilla.
+    /// No se pudo dibujar la sección dentro de la grilla; la causa está en `source`.
     Layout {
         /// Sección que no se pudo dibujar.
         section: String,
         /// Causa: un error del motor Sugiyama o una validación de la grilla.
         source: SectionLayoutError,
+    },
+    /// Se rompió un invariante del pipeline. No depende de la entrada ni de la
+    /// configuración: es un bug de fbd-gen y conviene reportarlo con la entrada que lo
+    /// produce. Los fallos internos del motor de layout llegan como `Layout`, con
+    /// `sugiyama::LayoutError::Internal` como causa.
+    Internal {
+        /// Sección o programa donde se detectó.
+        section: String,
+        /// Qué invariante se rompió.
+        message: String,
     },
 }
 
@@ -245,8 +298,13 @@ impl fmt::Display for GenerationError {
                 Ok(())
             }
             Self::InvalidConfig { message } => write!(f, "configuración inválida: {message}"),
-            Self::Library(source) => write!(f, "{source}"),
-            Self::Layout { section, source } => write!(f, "layout de {section}: {source}"),
+            // Transparente: el mismo mensaje y la misma causa que el error de librería.
+            Self::Library(error) => write!(f, "{error}"),
+            // La causa va por `source()`, no repetida acá (ver `Error::source`).
+            Self::Layout { section, .. } => write!(f, "no se pudo dibujar la sección {section}"),
+            Self::Internal { section, message } => {
+                write!(f, "error interno en {section}: {message} (bug de fbd-gen)")
+            }
         }
     }
 }
@@ -254,7 +312,8 @@ impl fmt::Display for GenerationError {
 impl Error for GenerationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Library(source) => Some(source),
+            // Transparente: la causa del error de librería es la de éste.
+            Self::Library(error) => error.source(),
             Self::Layout { source, .. } => Some(source),
             _ => None,
         }
@@ -466,7 +525,12 @@ fn render_section(
     mut diags: Diagnostics,
 ) -> Result<GeneratedSection, GenerationError> {
     normalize::normalize(&mut section, &cfg.normalization, &mut diags);
-    let nets = normalize::networks(&section);
+    let Some(nets) = normalize::ordered_networks(&section) else {
+        return Err(GenerationError::Internal {
+            section: section.name.clone(),
+            message: "la normalización dejó dependencias sin orden posible entre redes".into(),
+        });
+    };
     let vars = types::section_vars(&section, known, &mut diags);
     if diags.has_errors() {
         return Err(GenerationError::InvalidInput {

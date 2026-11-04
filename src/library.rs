@@ -1,7 +1,7 @@
 //! Carga de la librería de bloques (`efb_dimensions.json`, exportada de Control Expert 15.1)
 //! y cálculo de la geometría por bloque.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,7 @@ impl Kind {
 /// Entrada extensible (`IN1`, `IN2`...): una EF como `AND` acepta de `min` a `max` pines.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Extensible {
     /// Cantidad mínima de pines de la extensión.
     pub min: u32,
@@ -47,12 +48,22 @@ pub struct Extensible {
 }
 
 impl Extensible {
+    /// Pines `{prefix}{first_index}`, `{prefix}{first_index + 1}`... entre `min` y `max`.
+    pub fn new(prefix: impl Into<String>, first_index: u32, min: u32, max: u32) -> Self {
+        Self {
+            min,
+            max,
+            prefix: prefix.into(),
+            first_index,
+        }
+    }
+
     /// Nombre del pin `k` (desde 0) de la extensión: `IN` y 1 dan `IN1`, `IN2`...
     ///
     /// ```
     /// use fbd_gen::ExtensiblePin;
     ///
-    /// let ext = ExtensiblePin { min: 2, max: 32, prefix: "IN".into(), first_index: 1 };
+    /// let ext = ExtensiblePin::new("IN", 1, 2, 32);
     /// assert_eq!(ext.pin_name(2), "IN3");
     /// assert_eq!(ext.index_of("in3"), Some(2));
     /// ```
@@ -77,6 +88,7 @@ impl Extensible {
 /// Pin de la interfaz de un bloque.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PinDef {
     /// Nombre del pin, único en el bloque sin distinguir mayúsculas.
     pub name: String,
@@ -89,9 +101,29 @@ pub struct PinDef {
     pub extensible: Option<Extensible>,
 }
 
+impl PinDef {
+    /// Pin con representación gráfica en la posición `position` de su lado (1 = arriba).
+    pub fn new(name: impl Into<String>, ty: impl Into<String>, position: u32) -> Self {
+        Self {
+            name: name.into(),
+            ty: ty.into(),
+            position: Some(position),
+            extensible: None,
+        }
+    }
+
+    /// Convierte el pin en el primero de una serie extensible (`IN1`, `IN2`...).
+    #[must_use]
+    pub fn with_extensible(mut self, extensible: Extensible) -> Self {
+        self.extensible = Some(extensible);
+        self
+    }
+}
+
 /// Interfaz y geometría de una EF/EFB/DFB: lo necesario para instanciarla y dibujarla.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct BlockDef {
     /// Nombre del tipo de bloque (`TON`, `AND`, `MotorPropio`...).
     pub name: String,
@@ -137,7 +169,9 @@ impl BlockDef {
 /// Catálogo de bloques indexado por nombre, sin distinguir mayúsculas.
 #[derive(Debug, Clone, Default)]
 pub struct Library {
-    blocks: HashMap<String, BlockDef>,
+    /// Por nombre en mayúsculas: búsqueda sin distinguir mayúsculas y recorrido en un
+    /// orden fijo.
+    blocks: BTreeMap<String, BlockDef>,
 }
 
 impl Library {
@@ -198,6 +232,13 @@ impl Library {
         self.blocks.get(&name.to_ascii_uppercase())
     }
 
+    /// Todas las definiciones, ordenadas por nombre sin distinguir mayúsculas. Sirve, por
+    /// ejemplo, para describir el catálogo en el prompt de un LLM o para buscar bloques
+    /// por tipo de pin.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &BlockDef> {
+        self.blocks.values()
+    }
+
     /// Cantidad de bloques del catálogo.
     pub fn len(&self) -> usize {
         self.blocks.len()
@@ -206,6 +247,15 @@ impl Library {
     /// Si el catálogo no tiene bloques.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
+    }
+}
+
+impl<'a> IntoIterator for &'a Library {
+    type Item = &'a BlockDef;
+    type IntoIter = std::collections::btree_map::Values<'a, String, BlockDef>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.blocks.values()
     }
 }
 

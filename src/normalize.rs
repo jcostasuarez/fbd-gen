@@ -9,12 +9,15 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::graph::{OnCycle, UnionFind, topo_order};
 use crate::iec::{sanitize, unique_name};
-use crate::model::{Diagnostics, GeneratedVar, Level, Param, PinRef, Section, Stage, Wire};
+use crate::model::{
+    DiagnosticCode as Code, Diagnostics, GeneratedVar, Level, Param, PinRef, Section, Stage, Wire,
+};
 
 const STAGE: Stage = Stage::Normalize;
 
 /// Opciones de la normalización previa al layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NormalizeConfig {
     /// Umbral para reemplazar fan-out por variables cuando se conserva la ejecución.
     pub max_fanout: usize,
@@ -36,6 +39,7 @@ pub(crate) fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mu
             section,
             w.from,
             Some(w.to),
+            Code::FeedbackCut,
             "realimentación",
             &mut names,
             diags,
@@ -61,18 +65,29 @@ pub(crate) fn normalize(section: &mut Section, cfg: &NormalizeConfig, diags: &mu
             let can_order = ordered_networks(section).is_some();
             section.wires = wires;
             if !can_order {
-                diags.push(
-                    Level::Info,
-                    STAGE,
-                    format!(
-                        "{}: se conserva fan-out {fanout} para respetar el orden de ejecución",
-                        section.pin_path(out)
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Info,
+                        STAGE,
+                        Code::FanoutKept,
+                        format!(
+                            "{}: se conserva fan-out {fanout} para respetar el orden de ejecución",
+                            section.pin_path(out)
+                        ),
+                    )
+                    .at_pin(section, out);
                 continue;
             }
             let reason = format!("fan-out {fanout} > {}", cfg.max_fanout);
-            to_variable(section, out, None, &reason, &mut names, diags);
+            to_variable(
+                section,
+                out,
+                None,
+                Code::FanoutToVariable,
+                &reason,
+                &mut names,
+                diags,
+            );
         }
     }
 }
@@ -100,6 +115,7 @@ fn to_variable(
     section: &mut Section,
     out: PinRef,
     only: Option<PinRef>,
+    code: Code,
     reason: &str,
     names: &mut HashSet<String>,
     diags: &mut Diagnostics,
@@ -140,16 +156,20 @@ fn to_variable(
         section.pin_mut(*t).param_in = Some(Param::Var(name.clone()));
     }
     section.wires.retain(|w| !cut(w));
-    diags.push(
-        Level::Info,
-        STAGE,
-        format!(
-            "{} -> variable {} ({reason}, {} destino/s)",
-            section.pin_path(out),
-            name,
-            targets.len()
-        ),
-    );
+    diags
+        .push(
+            Level::Info,
+            STAGE,
+            code,
+            format!(
+                "{} -> variable {} ({reason}, {} destino/s)",
+                section.pin_path(out),
+                name,
+                targets.len()
+            ),
+        )
+        .at_pin(section, out)
+        .at_variable(name);
 }
 
 /// Cables que cierran un ciclo. Dentro de cada componente fuertemente conexo se cortan
@@ -192,7 +212,9 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
                 on_stack[v] = true;
             }
             if let Some(&u) = adj[v].get(i) {
-                call.last_mut().expect("el tope de la pila es `(v, i)`").1 += 1;
+                if let Some(top) = call.last_mut() {
+                    top.1 += 1;
+                }
                 if index[u] == usize::MAX {
                     call.push((u, 0));
                 } else if on_stack[u] {
@@ -221,11 +243,10 @@ fn strongly_connected(section: &Section) -> Vec<usize> {
 
 /// Etapa 7: redes = componentes conexos por cables, ordenadas por las dependencias
 /// anteriores al corte de fan-out. Los empates respetan el orden del modelo.
-pub(crate) fn networks(section: &Section) -> Vec<Vec<usize>> {
-    ordered_networks(section).expect("la normalización conserva las dependencias de ejecución")
-}
-
-fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
+///
+/// `None` si las dependencias no admiten un orden entre redes. La normalización solo
+/// corta cables cuando ese orden existe, así que después de ella es un bug.
+pub(crate) fn ordered_networks(section: &Section) -> Option<Vec<Vec<usize>>> {
     let n = section.blocks.len();
     let mut uf = UnionFind::new(n);
     for w in &section.wires {

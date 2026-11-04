@@ -52,6 +52,27 @@ Escribe en `out/<programa>/`, por cada sección:
 
 y `manifest.json` con las secciones en orden de ejecución y los diagnósticos de programa.
 
+Otras opciones de la CLI:
+
+- `-` como entrada lee el grafo de la entrada estándar.
+- `--check` valida y genera en memoria, sin escribir archivos.
+- `--format json` escribe en stdout un solo objeto JSON: `status` (`ok`, `invalid` o
+  `error`), las secciones con sus archivos y los diagnósticos completos. Pensado para
+  que otra herramienta o un LLM lea el resultado sin interpretar texto.
+
+```bash
+cat grafo.json | fbd-gen - --check --format json
+```
+
+El código de salida es 0 si genera, 1 si la entrada es inválida (incluido un JSON mal
+formado o con un campo desconocido), 2 si los argumentos son incorrectos y 3 ante un
+error de lectura, escritura, librería o un error interno.
+
+Cada diagnóstico trae un `code` estable (`unknown_pin`, `type_mismatch`...) y una
+`location` con el bloque, pin, índice de link o variable de la entrada que lo causó, para
+que un programa (o el LLM que generó el grafo) pueda corregirlo sin interpretar el
+mensaje. Ver [diagnósticos](docs/API.md#diagnósticos).
+
 ### Verificación en Control Expert
 
 `scripts/ce_check.py` automatiza Control Expert mediante el servidor `control-expert-mcp`
@@ -218,6 +239,26 @@ network simplex contra su solución inicial. Las regresiones cubren además la g
 entera de los ejemplos, el determinismo, entradas hostiles, el orden de fan-out, la
 conservación de realimentaciones y cables necesarios, colisiones de nombres, familias
 escalares y literales tipados.
+
+`tests/properties.rs` genera programas pseudoaleatorios desde la librería real
+(plausibles y hostiles) y verifica el contrato del pipeline completo: sin pánicos ni
+errores internos, determinismo, rechazos con errores y ubicaciones que apuntan a la
+entrada, XML y SVG bien formados y coherentes con el layout. `FBD_PROPERTY_CASES` cambia
+la cantidad de casos (300 por defecto; el CI corre 5000 en release).
+
+La entrada la escribe un LLM, así que el generador no debe entrar en pánico con ningún
+JSON: un error de validación es un resultado válido, un pánico es un bug. `fuzz/` tiene
+un target de [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) que prueba
+`ProgramSpec`, `SectionSpec` y `FunctionCallSpec` arbitrarios y verifica que no aparezcan
+errores internos (requiere nightly). Conviene empezar con los ejemplos como corpus:
+
+```bash
+mkdir -p fuzz/corpus/generate && cp examples/*.json examples/probes/*.json fuzz/corpus/generate/
+cd fuzz && cargo +nightly fuzz run generate -- -max_total_time=300
+```
+
+`.github/workflows/fuzz.yml` lo corre un minuto en cada PR y media hora cada noche.
+
 `examples/probes/fanout_order.json` permite inspeccionar también el layout generado
 cuando los consumidores están declarados antes que la fuente. Estas pruebas no
 reemplazan la compilación y el round-trip en Control Expert descritos arriba.
@@ -232,7 +273,9 @@ que resume las [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/
 [Microsoft](https://microsoft.github.io/rust-guidelines/). Los lints están en `[lints]` de
 `Cargo.toml` y en `clippy.toml`: sin `unwrap` fuera de tests, sin `as` que pierda datos,
 sin `bool` como parámetro, toda la API pública documentada (con `# Errors`) y cada
-supresión con `#[expect(..., reason = "...")]`. Antes de subir cambios:
+supresión con `#[expect(..., reason = "...")]`. El código de producción tampoco usa
+`expect`, `panic!` ni `unreachable!` (`src/lib.rs`): un invariante roto es
+`GenerationError::Internal`. Antes de subir cambios:
 
 ```bash
 cargo fmt
@@ -242,21 +285,9 @@ cargo test --no-default-features
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 ```
 
-CI (`.github/workflows/ci.yml`) corre lo mismo para cada combinación de features y
-compila con la versión mínima de Rust declarada en `rust-version` (1.88).
-
-La entrada la escribe un LLM, así que el generador no debe entrar en pánico con ningún
-JSON: un error de validación es un resultado válido, un pánico es un bug. `fuzz/` tiene
-un target de [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) que prueba
-`ProgramSpec`, `SectionSpec` y `FunctionCallSpec` arbitrarios (requiere nightly):
-
-```bash
-cargo +nightly fuzz run generate -- -max_total_time=300
-```
-
-Conviene empezar con los ejemplos como corpus inicial:
-`mkdir -p fuzz/corpus/generate && cp examples/*.json examples/probes/*.json fuzz/corpus/generate/`.
-CI lo corre un minuto en cada cambio.
+CI (`.github/workflows/ci.yml`) corre lo mismo para cada combinación de features, en
+Linux y Windows, más las propiedades extendidas, el paquete y la versión mínima de Rust
+declarada en `rust-version` (1.88).
 
 ## Licencia
 

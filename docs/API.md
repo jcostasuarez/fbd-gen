@@ -32,6 +32,12 @@ for section in program.sections {
 | `register_block` | `BlockDefinition` | `Result<(), LibraryError>` |
 | `register_blocks_from_file` | Ruta de un catálogo adicional | `Result<(), LibraryError>` |
 
+`ProgramSpec::from_json`, `SectionSpec::from_json` y `FunctionCallSpec::from_json` leen
+la entrada desde JSON. A diferencia de `serde_json::from_str`, un error de formato
+(sintaxis, campo faltante o desconocido como `instace`) llega como
+`GenerationError::InvalidInput` con el código `invalid_json`, igual que los errores de
+validación, así un cliente los trata a todos del mismo modo.
+
 `ProgramSpec` contiene `name`, `task`, `variables`, `blocks`, `links`, `comments` y
 `partition`. Verifica consistencia entre equipos, divide por grupos/etapas/tamaño y
 ordena las secciones por dependencias.
@@ -41,10 +47,31 @@ sección. Deserializar un JSON con `partition` como `SectionSpec` es un error; `
 y `stage` de sus bloques se conservan como metadatos. No se aplica el chequeo entre equipos.
 
 Los dos formatos implementan `Serialize` y `Deserialize`. Para construirlos desde Rust
-existen `ProgramSpec::new`, `SectionSpec::new`, `BlockSpec::new` y `VarSpec::new`.
+existen `ProgramSpec::new`, `SectionSpec::new`, `BlockSpec::new`, `VarSpec::new` y
+`CommentSpec::new`; los campos opcionales se completan después, uno por uno.
 
 `GeneratorConfig` agrupa `normalization`, `layout` y `consistency`; cada configuración
-tiene `Default`. `LayoutConfig` son medidas enteras en celdas: separación entre
+tiene `Default` y se ajusta campo por campo:
+
+```rust,no_run
+use fbd_gen::{Generator, GeneratorConfig};
+
+let mut config = GeneratorConfig::default();
+config.normalization.max_fanout = 5;
+config.layout.node_gap = 3;
+let generator = Generator::embedded()?.with_config(config)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+### Compatibilidad entre versiones
+
+Los structs públicos (entradas, configuraciones, resultados, `Diagnostic` y los tipos de
+`sugiyama`) son `#[non_exhaustive]`: una versión nueva puede agregarles campos sin romper
+a quien los use. Por eso, desde otro crate no se arman con un literal `Tipo { .. }`, ni
+siquiera con `..Default::default()`: se usan `new`/`Default` y después se asignan los
+campos públicos. Los enums de errores, `Stage` y `DiagnosticCode` también pueden sumar
+variantes, así que un `match` sobre ellos necesita un brazo `_`. `Level`, `PinDirection`,
+`BlockKind`, `Parameter` y `LinkSpec` son conjuntos cerrados. `LayoutConfig` son medidas enteras en celdas: separación entre
 bloques, entre capas y entre redes, margen de la hoja y escalas de texto.
 
 ## Resultados y errores
@@ -57,8 +84,10 @@ ejecución. Cada `GeneratedSection` contiene:
 - `diagnostics`: avisos e información propios de la sección (normalización y layout). Los
   de validación, tipos, consistencia y partición están una sola vez, en el programa.
   Cada `Diagnostic` tiene `level`, `stage` (`Stage::Validate`, `Types`, `Consistency`,
-  `Partition`, `Normalize` o `Layout`, en minúsculas al serializar) y `message`.
-  `Diagnostic`, `Level` y `Stage` implementan `Display` (`[warning] normalize: ...`).
+  `Partition`, `Normalize` o `Layout`, en minúsculas al serializar), `code`, `location`
+  y `message` (ver [Diagnósticos](#diagnósticos)). `Diagnostic`, `Level`, `Stage` y
+  `DiagnosticCode` implementan `Display`; el de `Diagnostic` es el formato de la CLI
+  (`[warning] normalize/fanout_to_variable: ...`).
 - `xml` y `svg`: representaciones listas para guardar.
 - `layout_json()`: serialización del layout, compatible con el archivo `.layout.json` de la CLI.
 - `file_name(ext)`: nombre de archivo que usa la CLI (`<sección>.xbd`, `.svg`, `.layout.json`).
@@ -78,16 +107,67 @@ Un resultado `Ok` no contiene secciones inválidas ni salidas opcionales. Los er
 | `InvalidConfig { message }` | Opciones fuera de rango o inválidas |
 | `Library(LibraryError)` | Lectura o deserialización del catálogo base |
 | `Layout { section, source }` | No se pudo dibujar la sección; `source` es un `SectionLayoutError` |
+| `Internal { section, message }` | Se rompió un invariante del pipeline: es un bug de fbd-gen, no un problema de la entrada |
 
 `SectionLayoutError::Engine` envuelve el `sugiyama::LayoutError` del motor (ciclo,
-puerto fuera de su nodo, red demasiado grande) y `SectionLayoutError::Grid` indica que
-la hoja excede `sugiyama::MAX_EXTENT` o que el dibujo violaría un invariante de la grilla.
-Los dos se pueden distinguir con `match` sin parsear el mensaje.
+puerto fuera de su nodo, red demasiado grande o un invariante interno) y
+`SectionLayoutError::Grid` indica que la hoja excede `sugiyama::MAX_EXTENT` o que el
+dibujo violaría un invariante de la grilla. Se distinguen con `match`, sin parsear el
+mensaje.
+
+La generación no entra en pánico: el código de producción no tiene `unwrap`, `expect`,
+`panic!` ni `unreachable!` (lo impone un lint de clippy). Un invariante roto llega como
+`Internal` o, dentro del motor, como `Layout` con causa `sugiyama::LayoutError::Internal`;
+conviene reportarlo con la entrada que lo produce.
 
 `GenerationError::diagnostics()` da acceso a los diagnósticos de una entrada inválida.
-Los fallos operativos conservan su causa mediante `std::error::Error::source()`.
+Los fallos operativos conservan su causa mediante `std::error::Error::source()`, y cada
+nivel de la cadena tiene su propio mensaje sin repetir el de su causa: para mostrarlos
+todos se recorre la cadena (por ejemplo, `anyhow` con `{:#}`).
 Si falla una sección, `generate_program` devuelve `Err`; no publica un programa parcial.
 
+## Diagnósticos
+
+Un diagnóstico sirve a dos lectores. `message` es para personas y puede cambiar de
+redacción. `code` (`DiagnosticCode`) y `location` (`DiagnosticLocation`) son para
+programas, por ejemplo el LLM que corrige su propio grafo: con ellos se puede decidir
+qué arreglar sin interpretar el texto.
+
+- `code` dice qué se detectó: `unknown_pin`, `input_already_driven`, `type_mismatch`,
+  `undeducible_type`, `feedback_cut`... Su nombre serializado (`DiagnosticCode::as_str`)
+  es estable; `DiagnosticCode::ALL` lista todos y la documentación de cada variante dice
+  cuándo aparece. Pueden sumarse códigos en versiones futuras.
+- `location` dice dónde, en términos de la entrada: `block` (el `id` del bloque), `pin`,
+  `link` (índice en `links`, desde 0), `variable`, `comment` (índice en `comments`),
+  `group` (equipo) y `section`. Solo se completan los campos que aplican; al serializar
+  se omiten los vacíos, y `location` entera se omite si no hay ninguno.
+
+```json
+{
+  "level": "error",
+  "stage": "validate",
+  "code": "unknown_pin",
+  "location": { "block": "n", "pin": "FOO", "link": 0 },
+  "message": "n: el bloque NOT no tiene el pin FOO"
+}
+```
+
+```rust,no_run
+use fbd_gen::{DiagnosticCode, Generator, ProgramSpec};
+
+let spec: ProgramSpec = serde_json::from_str(r#"{"name":"P","blocks":[{"id":"n","type":"NOT"}],
+    "links":[["TRUE","n.FOO"]]}"#)?;
+let error = Generator::embedded()?.generate_program(&spec).unwrap_err();
+for d in error.diagnostics() {
+    if d.code == DiagnosticCode::UnknownPin {
+        println!("link {:?}: {:?} no tiene {:?}", d.location.link, d.location.block, d.location.pin);
+    }
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+La CLI los imprime como `[error] validate/unknown_pin: ...`, y `manifest.json` y cada
+`.layout.json` los incluyen completos.
 `fbd_gen::serde_json` re-exporta la versión de `serde_json` cuyo `Error` aparece en la
 API (`LibraryError::Json`, `layout_json`, `manifest_json`).
 
@@ -138,8 +218,41 @@ cargo run -- examples/custom_dfb.json --extra-lib examples/custom_blocks.json
 `register`, `register_all`, `extend_from_json` o `extend_from_file` antes de crear el generador.
 `Library::default()` permite empezar con un catálogo vacío.
 
-El campo `kind` admite `EF`, `EFB` y `DFB`. Para EF/EFB se pueden construir o deserializar
-`BlockDefinition`, `PinDefinition` y, para una EF extensible, `ExtensiblePin`.
+`Library::iter()` (o `for def in &library`) recorre todas las definiciones, base y
+propias, ordenadas por nombre sin distinguir mayúsculas; `get` busca una por nombre. Por
+ejemplo, para describirle al LLM los bloques disponibles:
+
+```rust,no_run
+use fbd_gen::{BlockKind, Generator};
+
+let generator = Generator::embedded()?;
+for def in generator.library().iter().filter(|d| d.kind == BlockKind::Efb) {
+    let inputs: Vec<&str> = def.inputs.iter().map(|p| p.name.as_str()).collect();
+    println!("{}({})", def.name, inputs.join(", "));
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+El campo `kind` admite `EF`, `EFB` y `DFB`. Para EF/EFB se puede deserializar la
+definición o construirla con `BlockDefinition::new(nombre, kind, ancho)`. Una entrada
+extensible se arma con `PinDefinition` y `ExtensiblePin` y se agrega con `pin`:
+
+```rust,no_run
+use fbd_gen::{BlockDefinition, BlockKind, ExtensiblePin, Generator, PinDefinition, PinDirection};
+
+let mut generator = Generator::embedded()?;
+generator.register_block(
+    // IN1..IN8, mínimo 2: `"inputs": 4` en el bloque crea IN1..IN4.
+    BlockDefinition::new("MiAnd", BlockKind::Ef, 8)
+        .pin(
+            PinDirection::In,
+            PinDefinition::new("IN1", "BOOL", 1).with_extensible(ExtensiblePin::new("IN", 1, 2, 8)),
+        )
+        .output("OUT", "BOOL", 1),
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 Las EFB/DFB generan instancias; una EF genera un objeto sin instancia persistente.
 
 **Registrar una interfaz no crea ni importa la lógica de la DFB.** Antes de importar la
@@ -209,17 +322,33 @@ fbd-gen = { path = "...", default-features = false, features = ["embedded-librar
 
 ```rust
 let generator = fbd_gen::Generator::embedded()?;
+# Ok::<(), fbd_gen::GenerationError>(())
 ```
 
 ## Motor de layout
 
-`fbd_gen::sugiyama::layout` se puede usar por separado: recibe cajas (`Node`), cables
-entre puertos en filas fijas (`Edge`, sin ciclos) y separaciones (`Spacing`), y devuelve la
-esquina de cada caja y los quiebres de cada cable (`Placement`), todo en enteros.
+`fbd_gen::sugiyama::layout` se puede usar por separado: recibe cajas (`Node::new`), cables
+entre puertos en filas fijas (`Edge::new`, sin ciclos) y separaciones (`Spacing::new`), y
+devuelve la esquina de cada caja y los quiebres de cada cable (`Placement`), todo en enteros.
+
+```rust
+use fbd_gen::sugiyama::{Edge, Node, Spacing, layout};
+
+// Dos cajas de 4x3; la salida de la fila 1 de la primera va a la entrada de la fila 1
+// de la segunda.
+let placement = layout(
+    &[Node::new(4, 3), Node::new(4, 3)],
+    &[Edge::new(0, 1, 1, 1)],
+    &Spacing::new(2, 3),
+)?;
+assert!(placement.nodes[1].x > placement.nodes[0].x);
+# Ok::<(), fbd_gen::sugiyama::LayoutError>(())
+```
 Si la entrada no se puede dibujar devuelve `sugiyama::LayoutError`: un puerto fuera de su
 caja (`PortOutOfNode`), cables con un ciclo (`Cycle`), restricciones sin solución
-(`Infeasible`), o una caja con medidas negativas o un dibujo que podría pasar de
-`sugiyama::MAX_EXTENT` celdas por eje (`TooLarge`). Ese tope garantiza que ninguna cuenta
+(`Infeasible`), una caja con medidas negativas o un dibujo que podría pasar de
+`sugiyama::MAX_EXTENT` celdas por eje (`TooLarge`), o un invariante interno roto
+(`Internal`, un bug). Ese tope garantiza que ninguna cuenta
 en `i32` desborde.
 
 Los demás módulos (validación, partición, normalización, export) son internos: su orden e

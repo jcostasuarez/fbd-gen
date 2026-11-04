@@ -4,10 +4,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::iec::{is_address, is_identifier, is_literal, is_variable_ref, task_name, var_root};
-use crate::library::{BlockDef, Library};
+use crate::library::{BlockDef, Extensible, Library};
 use crate::model::{
-    Block, BlockSpec, Diagnostics, Dir, Level, Param, Pin, PinRef, ProgramSpec, Section, Stage,
-    Wire,
+    Block, BlockSpec, Diagnostic, DiagnosticCode as Code, Diagnostics, Dir, Level, Param, Pin,
+    PinRef, ProgramSpec, Section, Stage, Wire,
 };
 use crate::xml;
 
@@ -37,11 +37,11 @@ pub(crate) fn parse_endpoint(s: &str, ids: &HashMap<String, usize>) -> Endpoint 
 }
 
 /// Cantidad de instancias del pin extensible: la explícita, la mayor referenciada o el mínimo.
-fn extensible_count(
-    def: &BlockDef,
+fn extensible_count<'d>(
+    def: &'d BlockDef,
     explicit: Option<u32>,
     referenced: &[String],
-) -> Option<(usize, u32)> {
+) -> Option<(usize, &'d Extensible, u32)> {
     let (idx, ext) = def
         .inputs
         .iter()
@@ -52,7 +52,7 @@ fn extensible_count(
         .filter_map(|name| ext.index_of(name).map(|k| k + 1))
         .max()
         .unwrap_or(0);
-    Some((idx, explicit.unwrap_or(0).max(max_ref).max(ext.min)))
+    Some((idx, ext, explicit.unwrap_or(0).max(max_ref).max(ext.min)))
 }
 
 fn build_block(
@@ -63,17 +63,16 @@ fn build_block(
 ) -> Block {
     let mut ext = extensible_count(def, spec.inputs, referenced);
     let mut extra_pins = 0;
-    if let Some((i, n)) = &mut ext {
-        let e = def.inputs[*i]
-            .extensible
-            .as_ref()
-            .expect("`extensible_count` devuelve el índice del pin extensible");
+    if let Some((_, e, n)) = &mut ext {
         if *n > e.max {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("{}: {} entradas extensibles, máximo {}", spec.id, n, e.max),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::TooManyInputs,
+                    format!("{}: {} entradas extensibles, máximo {}", spec.id, n, e.max),
+                )
+                .at_block(&spec.id);
             // El error ya invalida la sección; no crear más pines que los que admite.
             *n = e.max;
         }
@@ -96,7 +95,7 @@ fn build_block(
     for (i, p) in def.inputs.iter().enumerate() {
         let Some(pos) = p.position else { continue };
         match (&p.extensible, ext) {
-            (Some(e), Some((ei, n))) if ei == i => {
+            (Some(e), Some((ei, _, n))) if ei == i => {
                 for k in 0..n {
                     push(e.pin_name(k), Dir::In, &p.ty, 3 + pos + k, commutative);
                 }
@@ -116,14 +115,17 @@ fn build_block(
     }
     let height = pins.iter().map(|p| p.row + 1).max().unwrap_or(4).max(4);
     if !def.width_measured {
-        diags.push(
-            Level::Warning,
-            STAGE,
-            format!(
-                "{}: ancho de {} estimado ({} celdas)",
-                spec.id, def.name, def.width
-            ),
-        );
+        diags
+            .push(
+                Level::Warning,
+                STAGE,
+                Code::EstimatedWidth,
+                format!(
+                    "{}: ancho de {} estimado ({} celdas)",
+                    spec.id, def.name, def.width
+                ),
+            )
+            .at_block(&spec.id);
     }
     Block {
         id: spec.id.clone(),
@@ -147,17 +149,18 @@ fn build_block(
 /// control, salvo tabulación y saltos de línea) produciría un `.xbd` mal formado, que
 /// Control Expert no puede importar. Los nombres ya se validan como identificadores.
 fn check_xml_texts(spec: &ProgramSpec, diags: &mut Diagnostics) {
-    let mut check = |what: &dyn Fn() -> String, text: &str| {
+    let mut check = |what: &dyn Fn() -> String, at: &dyn Fn(&mut Diagnostic), text: &str| {
         if let Some(c) = xml::invalid_char(text) {
-            diags.push(
+            at(diags.push(
                 Level::Error,
                 STAGE,
+                Code::InvalidXmlChar,
                 format!(
                     "{}: caracter U+{:04X} no admitido en XML",
                     what(),
                     u32::from(c)
                 ),
-            );
+            ));
         }
     };
     for v in &spec.variables {
@@ -169,22 +172,46 @@ fn check_xml_texts(spec: &ProgramSpec, diags: &mut Diagnostics) {
         ];
         for (field, text) in fields {
             if let Some(text) = text {
-                check(&|| format!("variable {}: {field}", v.name), text);
+                check(
+                    &|| format!("variable {}: {field}", v.name),
+                    &|d| {
+                        d.at_variable(&v.name);
+                    },
+                    text,
+                );
             }
         }
     }
     for b in &spec.blocks {
         if let Some(text) = &b.comment {
-            check(&|| format!("{}: comentario", b.id), text);
+            check(
+                &|| format!("{}: comentario", b.id),
+                &|d| {
+                    d.at_block(&b.id);
+                },
+                text,
+            );
         }
     }
-    for c in &spec.comments {
-        check(&|| format!("comentario de la red de {}", c.at), &c.text);
+    for (i, c) in spec.comments.iter().enumerate() {
+        check(
+            &|| format!("comentario de la red de {}", c.at),
+            &|d| {
+                d.at_comment(i);
+            },
+            &c.text,
+        );
     }
     for (i, l) in spec.links.iter().enumerate() {
         let (a, b) = l.ends();
         for end in [a, b] {
-            check(&|| format!("link {i}"), end);
+            check(
+                &|| format!("link {i}"),
+                &|d| {
+                    d.at_link(i);
+                },
+                end,
+            );
         }
     }
 }
@@ -227,8 +254,8 @@ pub(crate) fn resolve(
         comments: resolve_comments(spec, &ids, diags),
     };
     let mut drivers = HashMap::new();
-    for link in links {
-        connect(&mut section, &mut drivers, link, diags);
+    for (li, link) in links.into_iter().enumerate() {
+        connect(&mut section, &mut drivers, li, link, diags);
     }
     warn_unconnected(&section, &drivers, diags);
     (!diags.has_errors()).then_some(section)
@@ -241,6 +268,7 @@ fn check_program(spec: &ProgramSpec, diags: &mut Diagnostics) {
         diags.push(
             Level::Error,
             STAGE,
+            Code::InvalidProgramName,
             format!(
                 "nombre \"{}\" inválido: tiene que ser un identificador IEC",
                 spec.name
@@ -248,12 +276,18 @@ fn check_program(spec: &ProgramSpec, diags: &mut Diagnostics) {
         );
     }
     if spec.blocks.is_empty() {
-        diags.push(Level::Error, STAGE, "el grafo no tiene bloques");
+        diags.push(
+            Level::Error,
+            STAGE,
+            Code::EmptyGraph,
+            "el grafo no tiene bloques",
+        );
     }
     if task_name(&spec.task).is_none() {
         diags.push(
             Level::Error,
             STAGE,
+            Code::InvalidTask,
             format!(
                 "tarea \"{}\" inválida: MAST, FAST, AUX0 a AUX3 o SAFE",
                 spec.task
@@ -262,21 +296,24 @@ fn check_program(spec: &ProgramSpec, diags: &mut Diagnostics) {
     }
     for v in &spec.variables {
         if !is_variable_ref(&v.name) {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("variable declarada con nombre inválido: \"{}\"", v.name),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::InvalidVariableName,
+                    format!("variable declarada con nombre inválido: \"{}\"", v.name),
+                )
+                .at_variable(&v.name);
         }
         if let Some(address) = v.address.as_ref().filter(|a| !is_address(a)) {
             diags.push(
                 Level::Error,
-                STAGE,
+                STAGE, Code::InvalidAddress,
                 format!(
                     "variable {}: \"{address}\" no es una dirección topológica (%MW100, %I0.1.2...)",
                     v.name
                 ),
-            );
+            ).at_variable(&v.name);
         }
     }
 }
@@ -287,25 +324,34 @@ fn index_blocks(spec: &ProgramSpec, diags: &mut Diagnostics) -> HashMap<String, 
     for (i, b) in spec.blocks.iter().enumerate() {
         // Un punto en el id lo confundiría con `bloque.PIN` en los links.
         if !is_identifier(&b.id) {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("id de bloque inválido: \"{}\"", b.id),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::InvalidBlockId,
+                    format!("id de bloque inválido: \"{}\"", b.id),
+                )
+                .at_block(&b.id);
         }
         if let Some(inst) = b.instance.as_ref().filter(|i| !is_identifier(i)) {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("{}: nombre de instancia inválido \"{inst}\"", b.id),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::InvalidInstanceName,
+                    format!("{}: nombre de instancia inválido \"{inst}\"", b.id),
+                )
+                .at_block(&b.id);
         }
         if ids.insert(b.id.to_ascii_uppercase(), i).is_some() {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("id de bloque duplicado: {}", b.id),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::DuplicateBlockId,
+                    format!("id de bloque duplicado: {}", b.id),
+                )
+                .at_block(&b.id);
         }
     }
     ids
@@ -335,11 +381,16 @@ fn build_blocks(
     for (b, referenced) in spec.blocks.iter().zip(referenced) {
         match lib.get(&b.ty) {
             Some(def) => blocks.push(build_block(b, def, referenced, diags)),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!("{}: tipo de bloque desconocido {}", b.id, b.ty),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UnknownBlockType,
+                        format!("{}: tipo de bloque desconocido {}", b.id, b.ty),
+                    )
+                    .at_block(&b.id);
+            }
         }
     }
     blocks
@@ -362,11 +413,14 @@ fn check_names(
         if let Some(inst) = &b.instance
             && let Some(other) = instances.insert(inst.to_ascii_uppercase(), &b.id)
         {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("instancia {} usada por {} y {}", inst, other, b.id),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::DuplicateInstance,
+                    format!("instancia {} usada por {} y {}", inst, other, b.id),
+                )
+                .at_block(&b.id);
         }
     }
 
@@ -393,7 +447,9 @@ fn check_names(
             continue;
         };
         if reported.insert(key) {
-            diags.push(Level::Error, STAGE, message);
+            diags
+                .push(Level::Error, STAGE, Code::NameCollision, message)
+                .at_variable(name);
         }
     }
 }
@@ -405,14 +461,19 @@ fn resolve_comments(
     diags: &mut Diagnostics,
 ) -> Vec<(usize, String)> {
     let mut comments = Vec::new();
-    for c in &spec.comments {
+    for (i, c) in spec.comments.iter().enumerate() {
         match ids.get(&c.at.to_ascii_uppercase()) {
             Some(&b) => comments.push((b, c.text.clone())),
-            None => diags.push(
-                Level::Error,
-                STAGE,
-                format!("comentario \"{}\": no existe el bloque {}", c.text, c.at),
-            ),
+            None => {
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::UnknownCommentTarget,
+                        format!("comentario \"{}\": no existe el bloque {}", c.text, c.at),
+                    )
+                    .at_comment(i);
+            }
         }
     }
     comments
@@ -426,17 +487,22 @@ enum End {
     Value(Param),
 }
 
-/// Busca el pin de un extremo `bloque.PIN`; los demás extremos son valores.
-fn lookup(section: &Section, endpoint: Endpoint) -> Result<End, String> {
+/// Busca el pin de un extremo `bloque.PIN` del link `li`; los demás extremos son valores.
+fn lookup(section: &Section, li: usize, endpoint: Endpoint) -> Result<End, Box<Diagnostic>> {
     match endpoint {
         Endpoint::Pin { block, pin } => section.blocks[block]
             .pin_index(&pin)
             .map(|p| End::Pin(PinRef { block, pin: p }))
             .ok_or_else(|| {
-                format!(
-                    "{}: el bloque {} no tiene el pin {}",
-                    section.blocks[block].id, section.blocks[block].ty, pin
-                )
+                let b = &section.blocks[block];
+                let mut d = Diagnostic::new(
+                    Level::Error,
+                    STAGE,
+                    Code::UnknownPin,
+                    format!("{}: el bloque {} no tiene el pin {}", b.id, b.ty, pin),
+                );
+                d.at_link(li).at_block(&b.id).at_pin_name(&pin);
+                Box::new(d)
             }),
         Endpoint::Var(name) => Ok(End::Value(Param::Var(name))),
         Endpoint::Lit(text) => Ok(End::Value(Param::Lit(text))),
@@ -448,14 +514,15 @@ fn lookup(section: &Section, endpoint: Endpoint) -> Result<End, String> {
 fn connect(
     section: &mut Section,
     drivers: &mut HashMap<PinRef, String>,
+    li: usize,
     (a, b, sa, sb): ParsedLink<'_>,
     diags: &mut Diagnostics,
 ) {
     let link = format!("[{sa} -> {sb}]");
-    let (from, to) = match (lookup(section, a), lookup(section, b)) {
+    let (from, to) = match (lookup(section, li, a), lookup(section, li, b)) {
         (Ok(from), Ok(to)) => (from, to),
         (Err(e), _) | (_, Err(e)) => {
-            diags.push(Level::Error, STAGE, e);
+            diags.0.push(*e);
             return;
         }
     };
@@ -464,33 +531,42 @@ fn connect(
         _ => None,
     });
     if let Some(name) = invalid_var {
-        diags.push(
-            Level::Error,
-            STAGE,
-            format!("{link}: \"{name}\" no es un pin, un literal ni una variable válida"),
-        );
+        diags
+            .push(
+                Level::Error,
+                STAGE,
+                Code::InvalidEndpoint,
+                format!("{link}: \"{name}\" no es un pin, un literal ni una variable válida"),
+            )
+            .at_link(li);
         return;
     }
     let is_output = |section: &Section, r: PinRef, diags: &mut Diagnostics| {
         let ok = section.pin(r).dir.has_right();
         if !ok {
-            diags.push(
-                Level::Error,
-                STAGE,
-                format!("{link}: {} no es una salida", section.pin_path(r)),
-            );
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::NotAnOutput,
+                    format!("{link}: {} no es una salida", section.pin_path(r)),
+                )
+                .at_link(li)
+                .at_pin(section, r);
         }
         ok
     };
     match (from, to) {
         (End::Pin(from), End::Pin(to)) => {
-            if is_output(section, from, diags) && claim_input(section, drivers, to, &link, diags) {
+            if is_output(section, from, diags)
+                && claim_input(section, drivers, li, to, &link, diags)
+            {
                 // La compatibilidad de tipos la valida la inferencia (types.rs).
                 section.wires.push(Wire { from, to });
             }
         }
         (End::Value(param), End::Pin(to)) => {
-            if claim_input(section, drivers, to, &link, diags) {
+            if claim_input(section, drivers, li, to, &link, diags) {
                 section.pin_mut(to).param_in = Some(param);
             }
         }
@@ -499,25 +575,40 @@ fn connect(
                 return;
             }
             if let Some(prev) = &section.pin(from).param_out {
-                diags.push(
-                    Level::Error,
-                    STAGE,
-                    format!("{link}: la salida ya escribe {}", prev.text()),
-                );
+                diags
+                    .push(
+                        Level::Error,
+                        STAGE,
+                        Code::OutputAlreadyAssigned,
+                        format!("{link}: la salida ya escribe {}", prev.text()),
+                    )
+                    .at_link(li)
+                    .at_pin(section, from);
                 return;
             }
             section.pin_mut(from).param_out = Some(Param::Var(name));
         }
-        (End::Pin(_), End::Value(Param::Lit(_))) => diags.push(
-            Level::Error,
-            STAGE,
-            format!("{link}: una salida no puede escribir un literal"),
-        ),
-        (End::Value(_), End::Value(_)) => diags.push(
-            Level::Error,
-            STAGE,
-            format!("{link}: ningún extremo es un pin de bloque"),
-        ),
+        (End::Pin(from), End::Value(Param::Lit(_))) => {
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::OutputToLiteral,
+                    format!("{link}: una salida no puede escribir un literal"),
+                )
+                .at_link(li)
+                .at_pin(section, from);
+        }
+        (End::Value(_), End::Value(_)) => {
+            diags
+                .push(
+                    Level::Error,
+                    STAGE,
+                    Code::NoBlockEndpoint,
+                    format!("{link}: ningún extremo es un pin de bloque"),
+                )
+                .at_link(li);
+        }
     }
 }
 
@@ -525,27 +616,36 @@ fn connect(
 fn claim_input(
     section: &Section,
     drivers: &mut HashMap<PinRef, String>,
+    li: usize,
     r: PinRef,
     link: &str,
     diags: &mut Diagnostics,
 ) -> bool {
     if !section.pin(r).dir.has_left() {
-        diags.push(
-            Level::Error,
-            STAGE,
-            format!("{link}: {} no es una entrada", section.pin_path(r)),
-        );
+        diags
+            .push(
+                Level::Error,
+                STAGE,
+                Code::NotAnInput,
+                format!("{link}: {} no es una entrada", section.pin_path(r)),
+            )
+            .at_link(li)
+            .at_pin(section, r);
         return false;
     }
     if let Some(prev) = drivers.insert(r, link.to_string()) {
-        diags.push(
-            Level::Error,
-            STAGE,
-            format!(
-                "{link}: {} ya está conectada por {prev}",
-                section.pin_path(r)
-            ),
-        );
+        diags
+            .push(
+                Level::Error,
+                STAGE,
+                Code::InputAlreadyDriven,
+                format!(
+                    "{link}: {} ya está conectada por {prev}",
+                    section.pin_path(r)
+                ),
+            )
+            .at_link(li)
+            .at_pin(section, r);
         return false;
     }
     true
@@ -557,21 +657,29 @@ fn warn_unconnected(section: &Section, drivers: &HashMap<PinRef, String>, diags:
         for (pi, p) in b.pins.iter().enumerate() {
             let connected = drivers.contains_key(&PinRef { block: bi, pin: pi });
             if p.permutable && !connected {
-                diags.push(
-                    Level::Warning,
-                    STAGE,
-                    format!("{}.{}: entrada extensible sin conectar", b.id, p.name),
-                );
+                diags
+                    .push(
+                        Level::Warning,
+                        STAGE,
+                        Code::UnconnectedExtensibleInput,
+                        format!("{}.{}: entrada extensible sin conectar", b.id, p.name),
+                    )
+                    .at_block(&b.id)
+                    .at_pin_name(&p.name);
             }
             if p.dir == Dir::InOut && !connected {
-                diags.push(
-                    Level::Warning,
-                    STAGE,
-                    format!(
-                        "{}.{}: IN_OUT sin conectar del lado de entrada",
-                        b.id, p.name
-                    ),
-                );
+                diags
+                    .push(
+                        Level::Warning,
+                        STAGE,
+                        Code::UnconnectedInOut,
+                        format!(
+                            "{}.{}: IN_OUT sin conectar del lado de entrada",
+                            b.id, p.name
+                        ),
+                    )
+                    .at_block(&b.id)
+                    .at_pin_name(&p.name);
             }
         }
     }
